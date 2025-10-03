@@ -63,7 +63,12 @@ We follow a feature branch workflow to ensure the `master` branch always remains
     git merge <branch-name>
     ```
 
-4.  **Delete the Feature Branch:** After a successful merge, delete the local feature branch to keep the repository clean.
+4.  **Push to Remote:** After merging, push the changes in the `master` branch to the remote repository.
+    ```sh
+    git push
+    ```
+
+5.  **Delete the Feature Branch:** After a successful merge and push, delete the local feature branch to keep the repository clean.
     ```sh
     git branch -d <branch-name>
     ```
