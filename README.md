@@ -41,7 +41,7 @@ A Python project designed to interact with the Adapta.one API for various conten
         - Find the values of the `__client` and `__client_uat` cookies.
         - Combine them into a single string, separated by a semicolon (e.g., `__client=value1;__client_uat=value2`).
     4.  **For `ADAPTA_SESSION_ID` (Optional)**:
-        - Find the value of the `clerk_active_context` cookie. Using this can reduce the number of initial API calls.
+        - Find the value of the `clerk_active_context` cookie. **Important:** You must remove the trailing colon (`:`) from the value before adding it to the `.env` file. Using this ID can reduce the number of initial API calls.
 
     Now, edit the `.env` file with these values.
 
@@ -53,11 +53,27 @@ A Python project designed to interact with the Adapta.one API for various conten
 
 ## Usage
 
-Here is a basic example of how to use one of the generators. You can run this in a Python script or an interactive session.
+There are two ways to use this project: programmatically in a script or via the interactive chat interface.
+
+### Running the Chat Interface
+
+The primary way to interact with the generators is through the Streamlit web interface.
+
+To start the application, run the following command from the project root:
+
+```sh
+poetry run streamlit run src/app_chat.py
+```
+
+This will open a web browser with a chat interface where you can select the model (Gemini, Claude, or GPT) and have a conversation.
+
+### Programmatic Usage
+
+You can also use the generators directly in your own Python scripts. Here is a basic example:
 
 ```python
 import asyncio
-from src.generators import GeminiGenerator
+from src.generators.adapta import GeminiGenerator
 
 async def main():
     # Ensure you have a valid .env file in the project root

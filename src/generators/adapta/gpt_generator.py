@@ -9,7 +9,7 @@ from pathlib import Path
 
 from ..base import BaseContentGenerator
 from .client import AdaptaClient
-from ...config import settings
+from config import settings
 
 
 class GPTGenerator(BaseContentGenerator):

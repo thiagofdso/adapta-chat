@@ -23,7 +23,7 @@ def setup_logger(console_level: str = "INFO"):
     )
     
     # Adiciona logger para arquivo
-    log_file = Path("logs") / "contentgen-pipeline.log"
+    log_file = Path("logs") / "adapta-chat.log"
     log_file.parent.mkdir(exist_ok=True)
     
     logger.add(

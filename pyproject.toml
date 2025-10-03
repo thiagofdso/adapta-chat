@@ -20,6 +20,8 @@ dependencies = [
     "pydantic",
     "pydantic-settings",
     "httpx[http2]",
+    "streamlit",
+    "loguru",
 ]
 
 [tool.poetry]

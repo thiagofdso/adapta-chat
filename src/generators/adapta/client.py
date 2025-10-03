@@ -11,8 +11,8 @@ from pathlib import Path
 
 import httpx
 
-from ...config import settings
-from ...utils.logger import logger
+from config import settings
+from utils.logger import logger
 
 
 # Formatos de arquivo aceitos para upload

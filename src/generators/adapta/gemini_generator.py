@@ -9,8 +9,8 @@ from pathlib import Path
 
 from ..base import BaseContentGenerator
 from .client import AdaptaClient
-from ...config import settings
-from ...utils.text_cleaner import remove_think_tags
+from config import settings
+from utils.text_cleaner import remove_think_tags
 
 
 class GeminiGenerator(BaseContentGenerator):
