@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adapta-chat"
+version = "0.1.0"
+description = "A project to interact with Adapta.one API for content generation."
+authors = [
+  { name="Thiago Oliveira", email="thiagofdso.ufpa@gmail.com" },
+]
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "python-dotenv",
+    "pydantic",
+    "pydantic-settings",
+    "httpx[http2]",
+]
+
+[tool.poetry]
+packages = [{include = "*", from = "src"}]
+
+[project.urls]
+"Homepage" = "https://github.com/thiagofdso/adapta-chat"
+"Bug Tracker" = "https://github.com/thiagofdso/adapta-chat/issues"
