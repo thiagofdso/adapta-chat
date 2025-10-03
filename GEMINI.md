@@ -81,6 +81,13 @@ Use the following prefixes and conventions for clear and consistent branch names
 - Separate words with hyphens (`-`).
 - Keep the description short but descriptive.
 
+## 3. Documentation Maintenance
+
+To keep the project documentation accurate and up-to-date, please follow these rules:
+
+-   **Architecture Document (`docs/architecture.md`):** When making any changes that affect the project's architecture, components, or file structure, you must update `docs/architecture.md` accordingly.
+-   **Requirements Document (`docs/requirements.md`):** When adding new features or modifying the functionality of existing ones, you must update `docs/requirements.md` to reflect these changes.
+
 
 ### Paralelismo
 
