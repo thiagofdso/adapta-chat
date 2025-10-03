@@ -8,15 +8,29 @@ try:
         AdaptaClient,
         GeminiGenerator,
         ClaudeGenerator,
-        GPTGenerator
+        GPTGenerator,
+        ClaudeOpusGenerator,
+        DeepseekGenerator,
+        Grok4Generator,
+        GptOssGenerator,
+        DeepseekR1Generator,
+        GptO3Generator,
+        GptO4MiniGenerator
     )
     __all__ = [
         "BaseContentGenerator",
         "AdaptaClient",
         "GeminiGenerator",
         "ClaudeGenerator", 
-        "GPTGenerator"
+        "GPTGenerator",
+        "ClaudeOpusGenerator",
+        "DeepseekGenerator",
+        "Grok4Generator",
+        "GptOssGenerator",
+        "DeepseekR1Generator",
+        "GptO3Generator",
+        "GptO4MiniGenerator",
     ]
 except ImportError:
     # Se o sub-pacote adapta não estiver disponível, exporta apenas a base
-    __all__ = ["BaseContentGenerator"] 
+    __all__ = ["BaseContentGenerator"]
