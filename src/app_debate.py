@@ -73,29 +73,61 @@ def save_custom_prompt(agent_name, prompt_text):
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(prompt_text)
 
+import json
+
 def load_custom_prompts():
     """Loads all custom prompts from files."""
     prompts = {}
+    st.write(f"DEBUG: Checking PROMPTS_DIR: {PROMPTS_DIR}") # DEBUG
     if not os.path.exists(PROMPTS_DIR):
+        st.write(f"DEBUG: PROMPTS_DIR does not exist: {PROMPTS_DIR}") # DEBUG
         return prompts
-    for filename in os.listdir(PROMPTS_DIR):
+    
+    st.write(f"DEBUG: PROMPTS_DIR exists: {PROMPTS_DIR}") # DEBUG
+    files_in_dir = os.listdir(PROMPTS_DIR)
+    st.write(f"DEBUG: Files in PROMPTS_DIR: {files_in_dir}") # DEBUG
+
+    for filename in files_in_dir:
         if filename.endswith(".txt"):
             agent_name = os.path.splitext(filename)[0].replace('_', ' ')
             file_path = os.path.join(PROMPTS_DIR, filename)
-            with open(file_path, "r", encoding="utf-8") as f:
-                prompts[agent_name] = f.read()
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    prompts[agent_name] = f.read()
+                st.write(f"DEBUG: Loaded prompt for {agent_name} from {filename}") # DEBUG
+            except Exception as e:
+                st.write(f"DEBUG: Error loading {filename}: {e}") # DEBUG
     return prompts
+
+def save_model_config(model_config):
+    """Saves the agent model configuration to models.json."""
+    if not os.path.exists(PROMPTS_DIR):
+        os.makedirs(PROMPTS_DIR)
+    file_path = os.path.join(PROMPTS_DIR, "models.json")
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(model_config, f, indent=4)
+
+def load_model_config():
+    """Loads the agent model configuration from models.json."""
+    file_path = os.path.join(PROMPTS_DIR, "models.json")
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
 
 # --- Main Application Logic ---
 def main():
     st.title("🤖 Multi-Agent Debate Chat")
 
-    # Load custom prompts from files
+    # Load custom prompts and model config from files
     loaded_prompts = load_custom_prompts()
+    loaded_model_config = load_model_config()
 
     # --- State Initialization ---
     if "agent_custom_prompts" not in st.session_state:
         st.session_state.agent_custom_prompts = loaded_prompts
+    if "agent_selected_models" not in st.session_state:
+        st.session_state.agent_selected_models = loaded_model_config
     if "final_conclusion" not in st.session_state:
         st.session_state.final_conclusion = None
         
@@ -130,32 +162,59 @@ def main():
         # Create expanders for each agent
         for i in range(st.session_state.num_agents):
             agent_name = f"Agent {i+1}"
-            with st.sidebar.expander(f"Customize Prompt for {agent_name}"):
+            with st.sidebar.expander(f"Configure {agent_name}"):
+                current_prompt_value = st.session_state.agent_custom_prompts.get(agent_name, "")
+                st.write(f"DEBUG: Agent {agent_name} prompt value for text_area: {current_prompt_value}") # DEBUG
                 st.session_state.agent_custom_prompts[agent_name] = st.text_area(
                     f"Custom instructions for {agent_name}",
-                    value=st.session_state.agent_custom_prompts.get(agent_name, ""),
+                    value=current_prompt_value,
                     key=f"prompt_{agent_name}",
                     height=150
+                )
+                
+                # Model selection for each agent
+                available_model_names = list(base_generators.keys())
+                default_model = st.session_state.agent_selected_models.get(agent_name, available_model_names[0] if available_model_names else "Gemini")
+                
+                st.session_state.agent_selected_models[agent_name] = st.selectbox(
+                    f"Select Model for {agent_name}",
+                    options=available_model_names,
+                    index=available_model_names.index(default_model) if default_model in available_model_names else 0,
+                    key=f"model_select_{agent_name}"
                 )
         
         st.session_state.initial_problem = st.text_area("Enter the problem or topic to be debated:", height=200)
 
         if st.button("Start Debate"):
             if st.session_state.initial_problem:
-                # --- Save Custom Prompts ---
+                # --- Save Custom Prompts and Model Config ---
+                current_model_config = {}
                 for i in range(st.session_state.num_agents):
                     agent_name = f"Agent {i+1}"
                     prompt_text = st.session_state.agent_custom_prompts.get(agent_name, "")
-                    save_custom_prompt(agent_name, prompt_text)
-                st.success("Custom prompts saved!")
+                    if prompt_text:
+                        save_custom_prompt(agent_name, prompt_text)
+                    current_model_config[agent_name] = st.session_state.agent_selected_models.get(agent_name, "Gemini") # Default to Gemini if not set
+                save_model_config(current_model_config)
+                st.success("Custom prompts and model configurations saved!")
 
                 # --- Initialize Debate State ---
                 st.session_state.debate_started = True
                 st.session_state.current_round = 1
-                st.session_state.manager_agent = GeminiGenerator()
+                st.session_state.manager_agent = GeminiGenerator() # Manager always Gemini
                 
-                available_models = cycle([("GPT", base_generators["GPT"]), ("Gemini", base_generators["Gemini"]), ("Claude", base_generators["Claude"])])
-                st.session_state.worker_agents = {f"Agent {i+1}": next(available_models) for i in range(st.session_state.num_agents)}
+                # Assign models to worker agents based on selection or rotation
+                st.session_state.worker_agents = {}
+                available_models_cycle = cycle([("GPT", base_generators["GPT"]), ("Gemini", base_generators["Gemini"]), ("Claude", base_generators["Claude"])])
+                for i in range(st.session_state.num_agents):
+                    agent_name = f"Agent {i+1}"
+                    selected_model_name = st.session_state.agent_selected_models.get(agent_name)
+                    
+                    if selected_model_name and selected_model_name in base_generators:
+                        st.session_state.worker_agents[agent_name] = (selected_model_name, base_generators[selected_model_name])
+                    else:
+                        # Fallback to rotating if no selection or invalid selection
+                        st.session_state.worker_agents[agent_name] = next(available_models_cycle)
                 
                 st.session_state.agent_memories = {name: "" for name in st.session_state.worker_agents}
                 st.session_state.conversation_histories = {name: [] for name in st.session_state.worker_agents}
