@@ -30,7 +30,20 @@ A Python project designed to interact with the Adapta.one API for various conten
     ```sh
     cp .env.example .env
     ```
-    Now, edit the `.env` file with your Adapta.one cookies and session ID.
+
+    #### Obtaining Credentials
+
+    To configure your `.env` file, follow these steps:
+
+    1.  Log in to your account at [https://app.adapta.one/chats](https://app.adapta.one/chats).
+    2.  Open your browser's developer tools and inspect the cookies for the `https://app.adapta.one` domain.
+    3.  **For `ADAPTA_COOKIES_STR`**:
+        - Find the values of the `__client` and `__client_uat` cookies.
+        - Combine them into a single string, separated by a semicolon (e.g., `__client=value1;__client_uat=value2`).
+    4.  **For `ADAPTA_SESSION_ID` (Optional)**:
+        - Find the value of the `clerk_active_context` cookie. Using this can reduce the number of initial API calls.
+
+    Now, edit the `.env` file with these values.
 
 3.  **Install dependencies:**
     Use Poetry to install the required Python packages.
