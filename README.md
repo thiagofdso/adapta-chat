@@ -53,19 +53,31 @@ A Python project designed to interact with the Adapta.one API for various conten
 
 ## Usage
 
-There are two ways to use this project: programmatically in a script or via the interactive chat interface.
+This project provides two interactive web interfaces and can also be used programmatically.
 
-### Running the Chat Interface
+### Web Interfaces
 
-The primary way to interact with the generators is through the Streamlit web interface.
+#### Simple Chat (`app_chat.py`)
 
-To start the application, run the following command from the project root:
+A straightforward chat interface for having a one-on-one conversation with a selected AI model.
 
+To start this application, run:
 ```sh
 poetry run streamlit run src/app_chat.py
 ```
 
-This will open a web browser with a chat interface where you can select the model (Gemini, Claude, or GPT) and have a conversation.
+#### Multi-Agent Debate (`app_debate.py`)
+
+A more advanced application where you can orchestrate a debate between multiple AI agents to solve a problem.
+
+- **Setup:** Configure the number of agents and debate rounds.
+- **Debate:** Watch as agents respond in parallel, refining their solutions each round.
+- **Save Results:** At the end, you can save the entire debate transcript to a `debate.md` file.
+
+To start this application, run:
+```sh
+poetry run streamlit run src/app_debate.py
+```
 
 ### Programmatic Usage
 

@@ -134,8 +134,10 @@ class AdaptaClient:
             await self.client.aclose()
 
     async def _ensure_client(self) -> None:
-        """Garante que o cliente HTTP está inicializado."""
-        if self.client is None:
+        """Garante que o cliente HTTP est inicializado e aberto."""
+        if self.client is None or self.client.is_closed:
+            if self.client is not None:
+                await self.client.aclose()
             if self.timeout is None and self.connect_timeout is None and self.read_timeout is None:
                 timeout_config = None
             else:
