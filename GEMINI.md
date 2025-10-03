@@ -80,3 +80,18 @@ Use the following prefixes and conventions for clear and consistent branch names
 - Use lowercase letters.
 - Separate words with hyphens (`-`).
 - Keep the description short but descriptive.
+
+
+### Paralelismo
+
+Use ThreadPoolExecutor ou ProcessPoolExecutor
+Para tarefas em paralelo, prefira offload de trabalho pesado para threads ou processos com concurrent.futures.ThreadPoolExecutor ou ProcessPoolExecutor. Isso evita conflitos com o event loop principal do Streamlit.
+
+Sincronize chamadas assíncronas
+Se precisa rodar funções async, use asyncio.run() apenas fora do event loop ativo. Dentro Streamlit, converta chamadas async para sync usando asyncio.run() se possível, mas nunca dentro de código já rodando sob um event loop existente.
+
+Evite manipular event loop manualmente
+Não tente acessar, parar ou criar event loops com asyncio.get_event_loop() em ambiente Streamlit. Se necessário, sempre cheque se há um loop rodando com asyncio.get_running_loop() e ajuste para não criar conflitos.
+
+Utilize bibliotecas de paralelismo compatíveis
+Use bibliotecas como joblib ou multiprocessing, que lidam com paralelismo sem depender do event loop do Python. Para ações como download, processamento de arquivos ou tarefas longas, elas são mais seguras em Streamlit.
