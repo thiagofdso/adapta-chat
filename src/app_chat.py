@@ -38,27 +38,44 @@ def main():
         st.header("Controls")
         if st.button("+ New Chat"):
             st.session_state.messages = []
+            st.session_state.current_chat_id = None # Reset chat ID
             st.rerun()
 
         model_name = st.selectbox("Choose a model:", list(generators.keys()))
 
         with st.expander("🌐 Internet Search"):
-            st.write("Enhance the next response with a search.")
-            if st.button("Google"):
-                st.session_state.search_option = "google"
-                st.toast("Google search enabled for next message.")
-            if st.button("Científica"):
-                st.session_state.search_option = "scientific"
-                st.toast("Scientific search enabled for next message.")
-            if st.button("Deep Research"):
-                st.session_state.search_option = "deep_research"
-                st.toast("Deep Research enabled for next message.")
-
-    # Initialize chat history and search option in session state
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    if "search_option" not in st.session_state:
-        st.session_state.search_option = None
+            st.write("Select a search mode to enhance the AI's response for your next message.")
+            
+            search_mode_options = ["Desativado", "Google", "Científica", "Deep Research"]
+            
+            # Determine the default selection for the selectbox
+            default_search_selection = "Desativado"
+            # Safely get search_option, defaulting to None if not present
+            current_search_option = st.session_state.get("search_option", None)
+            
+            if current_search_option:
+                if current_search_option == "google":
+                    default_search_selection = "Google"
+                elif current_search_option == "scientific":
+                    default_search_selection = "Científica"
+                elif current_search_option == "deep_research":
+                    default_search_selection = "Deep Research"
+            
+            selected_search_mode = st.selectbox(
+                "Choose search type:",
+                search_mode_options,
+                index=search_mode_options.index(default_search_selection),
+                key="search_mode_selectbox"
+            )
+            
+            # Update session state based on selectbox selection
+            if selected_search_mode == "Desativado":
+                st.session_state.search_option = None
+            else:
+                st.session_state.search_option = selected_search_mode.lower().replace(" ", "_") # Convert to internal format
+    st.session_state.messages = st.session_state.get("messages", [])
+    st.session_state.search_option = st.session_state.get("search_option", None)
+    st.session_state.current_chat_id = st.session_state.get("current_chat_id", None)
 
     # Display chat messages
     for message in st.session_state.messages:
@@ -66,11 +83,17 @@ def main():
             st.markdown(message["content"])
 
     # Handle user input
-    if prompt := st.chat_input("What is up?"):
+    user_input = st.chat_input("What is up?")
+    if user_input is not None: # Check if user submitted anything (even empty string)
+        if user_input.strip() == "": # If submitted an empty string
+            prompt_to_send = "Por favor, continue gerando a sua resposta."
+        else:
+            prompt_to_send = user_input
+        
         # Add user message to history
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.messages.append({"role": "user", "content": prompt_to_send})
         with st.chat_message("user"):
-            st.markdown(prompt)
+            st.markdown(prompt_to_send)
 
         # Get response from the selected generator
         with st.chat_message("assistant"):
@@ -91,17 +114,19 @@ def main():
                 # Get the selected generator
                 selected_generator = generators[model_name]
 
-                # Call the model asynchronously with search parameters
+                # Generate chat ID if it's a new conversation
+                if st.session_state.current_chat_id is None:
+                    st.session_state.current_chat_id = selected_generator.generate_chat_id()
+
+                # Call the model asynchronously with search parameters and chat ID
                 response = asyncio.run(
                     selected_generator.call_model_with_messages(
                         st.session_state.messages,
                         searchType=searchType,
-                        tool=tool
+                        tool=tool,
+                        chat_id=st.session_state.current_chat_id
                     )
                 )
-
-                # Reset search option after use
-                st.session_state.search_option = None
 
                 if response:
                     message_placeholder.markdown(response)

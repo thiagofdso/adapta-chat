@@ -8,6 +8,7 @@ de conteúdo no pipeline ContentGen.
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Any
 from pathlib import Path
+import uuid # <--- Added import
 
 
 class BaseContentGenerator(ABC):
@@ -144,7 +145,7 @@ class BaseContentGenerator(ABC):
         pass
     
     @abstractmethod
-    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None) -> str:
+    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None, chat_id: Optional[str] = None) -> str: # <--- Modified signature
         """Chama o modelo diretamente com uma lista de mensagens.
         
         Este método permite enviar diretamente uma lista de mensagens para o modelo,
@@ -153,6 +154,9 @@ class BaseContentGenerator(ABC):
         
         Args:
             messages: Lista de mensagens no formato [{"role": "user/assistant", "content": "..."}]
+            searchType: O tipo de pesquisa a ser realizada.
+            tool: A ferramenta a ser usada.
+            chat_id: O ID do chat a ser usado para manter a conversa.
             
         Returns:
             Conteúdo da resposta do modelo.
@@ -162,6 +166,14 @@ class BaseContentGenerator(ABC):
         """
         pass
     
+    def generate_chat_id(self) -> str: # <--- Added method
+        """Gera um ID de chat aleatório no formato UUID4.
+        
+        Returns:
+            ID de chat aleatório formatado.
+        """
+        return str(uuid.uuid4())
+
     @abstractmethod
     async def health_check(self) -> bool:
         """Verifica se o provedor de IA está funcionando corretamente.

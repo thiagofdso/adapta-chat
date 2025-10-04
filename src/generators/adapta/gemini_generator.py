@@ -178,7 +178,7 @@ class GeminiGenerator(BaseContentGenerator):
         except Exception as e:
             raise Exception(f"Erro ao gerar conteúdo personalizado com Gemini: {e}")
     
-    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None) -> str:
+    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None, chat_id: Optional[str] = None) -> str:
         """Chama o modelo Gemini diretamente com uma lista de mensagens.
         
         Este método permite enviar diretamente uma lista de mensagens para o modelo,
@@ -189,6 +189,7 @@ class GeminiGenerator(BaseContentGenerator):
             messages: Lista de mensagens no formato [{"role": "user/assistant", "content": "..."}]
             searchType: O tipo de pesquisa a ser realizada.
             tool: A ferramenta a ser usada.
+            chat_id: O ID do chat a ser usado para manter a conversa.
             
         Returns:
             Conteúdo da resposta do modelo.
@@ -199,7 +200,7 @@ class GeminiGenerator(BaseContentGenerator):
         try:
             await self._ensure_client_initialized()
             
-            result = await self.client.call_model(messages, self.model_name, new_line=True, searchType=searchType, tool=tool)
+            result = await self.client.call_model(messages, self.model_name, new_line=True, searchType=searchType, tool=tool, chat_id=chat_id)
             
             if result is None:
                 raise Exception("Falha ao chamar modelo Gemini com mensagens")

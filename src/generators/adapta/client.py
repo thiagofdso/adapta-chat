@@ -450,7 +450,8 @@ class AdaptaClient:
         model: str = "GPT_5",
         new_line: bool = True,
         searchType: Optional[str] = None,
-        tool: Optional[str] = None
+        tool: Optional[str] = None,
+        chat_id: Optional[str] = None
     ) -> Optional[str]:
         """Chama um modelo específico da API Adapta.one.
         
@@ -460,6 +461,7 @@ class AdaptaClient:
             new_line: Se True, mantém quebras de linha; caso contrário, substitui por espaços.
             searchType: O tipo de pesquisa a ser realizada (ex: 'normal', 'scientific').
             tool: A ferramenta a ser usada (ex: 'PERFORM_RESEARCH').
+            chat_id: O ID do chat a ser usado para manter a conversa.
             
         Returns:
             Conteúdo da resposta extraído ou None se houver erro.
@@ -468,7 +470,7 @@ class AdaptaClient:
             logger.debug(f"Iniciando call_model para modelo: {model}")
             logger.debug(f"Número de mensagens: {len(messages)}")
             
-            response = await self._create_conversation_with_retry(messages, model, searchType=searchType, tool=tool)
+            response = await self._create_conversation_with_retry(messages, model, searchType=searchType, tool=tool, chat_id=chat_id)
             
             if response:
                 logger.debug(f"Conversa criada com sucesso. Status: {response.status_code}")
@@ -499,7 +501,8 @@ class AdaptaClient:
         messages: List[Dict[str, str]],
         model: str,
         searchType: Optional[str] = None,
-        tool: Optional[str] = None
+        tool: Optional[str] = None,
+        chat_id: Optional[str] = None
     ) -> Optional[httpx.Response]:
         """Cria uma nova conversa na API.
         
@@ -508,6 +511,7 @@ class AdaptaClient:
             model: Modelo de IA a ser usado.
             searchType: O tipo de pesquisa a ser realizada.
             tool: A ferramenta a ser usada.
+            chat_id: O ID do chat a ser usado para manter a conversa.
             
         Returns:
             Resposta da API ou None em caso de erro.
@@ -529,21 +533,22 @@ class AdaptaClient:
             token = self.cookies['__session']
             logger.debug(f"Token disponível: {token[:20]}... ({len(token)} caracteres)")
             
-            chat_id = self._generate_random_id()
-            logger.debug(f"Chat ID gerado: {chat_id}")
+            # Use provided chat_id or generate a new one
+            current_chat_id = chat_id if chat_id else self._generate_random_id()
+            logger.debug(f"Chat ID usado: {current_chat_id}")
             
             payload = {
                 "messages": messages,
                 "files": [],
                 "chatAiModel": model,
-                "chatId": chat_id,
+                "chatId": current_chat_id,
                 "chatType": "CHAT",
                 "agentId": None,
                 "folderId": None,
                 "tool": tool or None, # Use provided tool or default to None
                 "imageModel": "FLUX",
                 "imageAspectRatio": "ONE_TO_ONE",
-                "searchType": searchType, # Use provided searchType, which defaults to None
+                "searchType": searchType or None, # Use provided searchType or default to None
                 "flowType": None,
                 "shouldEditMessage": False,
                 "shouldGenerateNewFileFromSheetAssistant": False,
@@ -589,16 +594,15 @@ class AdaptaClient:
                 response.raise_for_status()
                 logger.debug("Requisição bem-sucedida")
                 
-                # Apaga a conversa após a criação com tratamento de exceção
-                logger.debug("Iniciando exclusão da conversa...")
-                try:
-                    await self._delete_conversations([chat_id])
-                    logger.debug("Conversa excluída com sucesso")
-                except Exception as delete_error:
-                    # Log do erro mas não quebra o fluxo principal
-                    logger.warning(f"Erro ao excluir conversa {chat_id} (não crítico): {delete_error}")
-                    logger.warning(f"Tipo do erro de exclusão: {type(delete_error).__name__}")
-                    # Continua o fluxo normalmente
+                # Apaga a conversa APENAS se o chat_id foi gerado por esta chamada (não persistente)
+                if not chat_id:
+                    logger.debug("Iniciando exclusão da conversa temporária...")
+                    try:
+                        await self._delete_conversations([current_chat_id])
+                        logger.debug("Conversa temporária excluída com sucesso")
+                    except Exception as delete_error:
+                        logger.warning(f"Erro ao excluir conversa temporária {current_chat_id} (não crítico): {delete_error}")
+                        logger.warning(f"Tipo do erro de exclusão: {type(delete_error).__name__}")
                 
                 return response
                 
@@ -742,7 +746,8 @@ class AdaptaClient:
         max_retries: int = 3,
         delay: float = 1.0,
         searchType: Optional[str] = None,
-        tool: Optional[str] = None
+        tool: Optional[str] = None,
+        chat_id: Optional[str] = None
     ) -> Optional[httpx.Response]:
         """Cria uma nova conversa na API com retry automático.
         
@@ -753,6 +758,7 @@ class AdaptaClient:
             delay: Delay entre tentativas em segundos.
             searchType: O tipo de pesquisa a ser realizada.
             tool: A ferramenta a ser usada.
+            chat_id: O ID do chat a ser usado para manter a conversa.
             
         Returns:
             Resposta da API ou None se todas as tentativas falharem.
@@ -763,7 +769,7 @@ class AdaptaClient:
             try:
                 logger.debug(f"Tentativa {attempt + 1}/{max_retries} para criar conversa")
                 
-                response = await self._create_conversation(messages, model, searchType=searchType, tool=tool)
+                response = await self._create_conversation(messages, model, searchType=searchType, tool=tool, chat_id=chat_id)
                 
                 if response:
                     logger.debug(f"Conversa criada com sucesso na tentativa {attempt + 1}")
