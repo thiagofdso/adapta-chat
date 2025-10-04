@@ -1,10 +1,13 @@
 import streamlit as st
 import asyncio
+import nest_asyncio
 from generators.adapta import (
     GeminiGenerator, ClaudeGenerator, GPTGenerator, ClaudeOpusGenerator,
     DeepseekGenerator, Grok4Generator, GptOssGenerator, DeepseekR1Generator,
     GptO3Generator, GptO4MiniGenerator
 )
+
+nest_asyncio.apply()
 
 # Page configuration
 st.set_page_config(page_title="Adapta.one Chat", layout="wide")

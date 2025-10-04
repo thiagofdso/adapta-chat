@@ -1,6 +1,7 @@
 import streamlit as st
 import asyncio
 import os
+import nest_asyncio
 from itertools import cycle
 from utils.text_cleaner import remove_think_tags
 from generators.adapta import (
@@ -8,6 +9,8 @@ from generators.adapta import (
     DeepseekGenerator, Grok4Generator, GptOssGenerator, DeepseekR1Generator,
     GptO3Generator, GptO4MiniGenerator
 )
+
+nest_asyncio.apply()
 
 def run_agent_call_sync(agent_instance, messages):
     """Wrapper to run async agent call in a new event loop."""
@@ -277,10 +280,14 @@ def main():
                     searchType=search_type
                 )
                 tasks.append(task)
+            
+            # Gather results from all tasks
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            return results
 
         # --- Execute the round and display results ---
         with st.spinner(f"Round {st.session_state.current_round} in progress... Agents are thinking..."):
-            all_responses = run_debate_round()
+            all_responses = asyncio.run(run_debate_round())
         agent_columns = st.columns(st.session_state.num_agents)
 
         for i, (agent_name, response) in enumerate(zip(st.session_state.worker_agents.keys(), all_responses)):
