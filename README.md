@@ -53,13 +53,13 @@ A Python project designed to interact with the Adapta.one API for various conten
 
 ## Usage
 
-This project provides two interactive web interfaces and can also be used programmatically.
+This project provides two interactive web interfaces and can also be used programmatically. It supports an expanded list of AI models, including Gemini, Claude, GPT, Claude Opus, Deepseek, Grok-4, GPT-OSS, Deepseek-R1, O3, and O4-Mini.
 
 ### Web Interfaces
 
 #### Simple Chat (`app_chat.py`)
 
-A straightforward chat interface for having a one-on-one conversation with a selected AI model.
+A straightforward chat interface for having a one-on-one conversation with a selected AI model. It now includes **internet search capabilities** (Google, Scientific, Deep Research) accessible via a button next to the chat input, allowing the AI to fetch real-time information.
 
 To start this application, run:
 ```sh
@@ -68,7 +68,7 @@ poetry run streamlit run src/app_chat.py
 
 #### Multi-Agent Debate (`app_debate.py`)
 
-A more advanced application where you can orchestrate a debate between multiple AI agents to solve a problem.
+A more advanced application where you can orchestrate a debate between multiple AI agents to collaboratively solve a problem. It now features an **optional internet access (Google search)** for all agents, configurable in the sidebar during setup.
 
 - **Setup:** Configure the number of agents and debate rounds.
 - **Debate:** Watch as agents respond in parallel, refining their solutions each round.
