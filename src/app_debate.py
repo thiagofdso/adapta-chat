@@ -3,8 +3,11 @@ import asyncio
 import os
 from itertools import cycle
 from utils.text_cleaner import remove_think_tags
-from concurrent.futures import ThreadPoolExecutor
-from generators.adapta import GeminiGenerator, ClaudeGenerator, GPTGenerator
+from generators.adapta import (
+    GeminiGenerator, ClaudeGenerator, GPTGenerator, ClaudeOpusGenerator,
+    DeepseekGenerator, Grok4Generator, GptOssGenerator, DeepseekR1Generator,
+    GptO3Generator, GptO4MiniGenerator
+)
 
 def run_agent_call_sync(agent_instance, messages):
     """Wrapper to run async agent call in a new event loop."""
@@ -21,6 +24,13 @@ def initialize_base_generators():
         "Gemini": GeminiGenerator(),
         "Claude": ClaudeGenerator(),
         "GPT": GPTGenerator(),
+        "Claude Opus": ClaudeOpusGenerator(),
+        "Deepseek": DeepseekGenerator(),
+        "Grok-4": Grok4Generator(),
+        "GPT-OSS": GptOssGenerator(),
+        "Deepseek-R1": DeepseekR1Generator(),
+        "O3": GptO3Generator(),
+        "O4-Mini": GptO4MiniGenerator(),
     }
 
 # --- Helper Functions ---
@@ -78,25 +88,18 @@ import json
 def load_custom_prompts():
     """Loads all custom prompts from files."""
     prompts = {}
-    st.write(f"DEBUG: Checking PROMPTS_DIR: {PROMPTS_DIR}") # DEBUG
     if not os.path.exists(PROMPTS_DIR):
-        st.write(f"DEBUG: PROMPTS_DIR does not exist: {PROMPTS_DIR}") # DEBUG
         return prompts
     
-    st.write(f"DEBUG: PROMPTS_DIR exists: {PROMPTS_DIR}") # DEBUG
-    files_in_dir = os.listdir(PROMPTS_DIR)
-    st.write(f"DEBUG: Files in PROMPTS_DIR: {files_in_dir}") # DEBUG
-
-    for filename in files_in_dir:
+    for filename in os.listdir(PROMPTS_DIR):
         if filename.endswith(".txt"):
             agent_name = os.path.splitext(filename)[0].replace('_', ' ')
             file_path = os.path.join(PROMPTS_DIR, filename)
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     prompts[agent_name] = f.read()
-                st.write(f"DEBUG: Loaded prompt for {agent_name} from {filename}") # DEBUG
             except Exception as e:
-                st.write(f"DEBUG: Error loading {filename}: {e}") # DEBUG
+                st.write(f"Error loading custom prompt for {agent_name}: {e}") # Keep this as a user-facing error
     return prompts
 
 def save_model_config(model_config):
@@ -141,6 +144,7 @@ def main():
         st.session_state.worker_agents = {}
         st.session_state.agent_memories = {}
         st.session_state.conversation_histories = {}
+        st.session_state.internet_access = False
 
     base_generators = initialize_base_generators()
 
@@ -150,6 +154,7 @@ def main():
         st.sidebar.header("Debate Setup")
         st.session_state.num_agents = st.sidebar.number_input("Number of Agents", min_value=2, max_value=10, value=3)
         st.session_state.num_rounds = st.sidebar.number_input("Number of Debate Rounds", min_value=1, max_value=10, value=3)
+        st.session_state.internet_access = st.sidebar.checkbox("Enable Internet Access (Google)")
         
         # --- Custom Prompts UI ---
         st.sidebar.subheader("Customize Agent Prompts")
@@ -164,7 +169,6 @@ def main():
             agent_name = f"Agent {i+1}"
             with st.sidebar.expander(f"Configure {agent_name}"):
                 current_prompt_value = st.session_state.agent_custom_prompts.get(agent_name, "")
-                st.write(f"DEBUG: Agent {agent_name} prompt value for text_area: {current_prompt_value}") # DEBUG
                 st.session_state.agent_custom_prompts[agent_name] = st.text_area(
                     f"Custom instructions for {agent_name}",
                     value=current_prompt_value,
@@ -205,7 +209,18 @@ def main():
                 
                 # Assign models to worker agents based on selection or rotation
                 st.session_state.worker_agents = {}
-                available_models_cycle = cycle([("GPT", base_generators["GPT"]), ("Gemini", base_generators["Gemini"]), ("Claude", base_generators["Claude"])])
+                available_models = cycle([
+                    ("GPT", base_generators["GPT"]),
+                    ("Gemini", base_generators["Gemini"]),
+                    ("Claude", base_generators["Claude"]),
+                    ("Claude Opus", base_generators["Claude Opus"]),
+                    ("Deepseek", base_generators["Deepseek"]),
+                    ("Grok-4", base_generators["Grok-4"]),
+                    ("GPT-OSS", base_generators["GPT-OSS"]),
+                    ("Deepseek-R1", base_generators["Deepseek-R1"]),
+                    ("O3", base_generators["O3"]),
+                    ("O4-Mini", base_generators["O4-Mini"]),
+                ])
                 for i in range(st.session_state.num_agents):
                     agent_name = f"Agent {i+1}"
                     selected_model_name = st.session_state.agent_selected_models.get(agent_name)
@@ -214,7 +229,7 @@ def main():
                         st.session_state.worker_agents[agent_name] = (selected_model_name, base_generators[selected_model_name])
                     else:
                         # Fallback to rotating if no selection or invalid selection
-                        st.session_state.worker_agents[agent_name] = next(available_models_cycle)
+                        st.session_state.worker_agents[agent_name] = next(available_models)
                 
                 st.session_state.agent_memories = {name: "" for name in st.session_state.worker_agents}
                 st.session_state.conversation_histories = {name: [] for name in st.session_state.worker_agents}
@@ -237,40 +252,31 @@ def main():
         st.subheader(f"Round {st.session_state.current_round} of {st.session_state.num_rounds}")
 
         # --- Function to run all agents in parallel for a round ---
-        def run_debate_round():
+        async def run_debate_round():
+            tasks = []
             previous_memories = st.session_state.agent_memories.copy()
-            results = []
+            search_type = "normal" if st.session_state.internet_access else None
 
-            with ThreadPoolExecutor(max_workers=st.session_state.num_agents) as executor:
-                futures = []
-                for agent_name, (model_name, agent_instance) in st.session_state.worker_agents.items():
-                    other_agents_memories = {name: mem for name, mem in previous_memories.items() if name != agent_name}
-                    
-                    prompt = get_agent_prompt(
-                        st.session_state.current_round,
-                        st.session_state.num_rounds,
-                        agent_name,
-                        st.session_state.initial_problem,
-                        other_agents_memories
-                    )
-                    
-                    # Append the new user prompt to the agent's history
-                    st.session_state.conversation_histories[agent_name].append({"role": "user", "content": prompt})
-                    
-                    # Submit the agent call to the thread pool
-                    future = executor.submit(
-                        run_agent_call_sync, 
-                        agent_instance, 
-                        st.session_state.conversation_histories[agent_name]
-                    )
-                    futures.append(future)
+            for agent_name, (model_name, agent_instance) in st.session_state.worker_agents.items():
+                other_agents_memories = {name: mem for name, mem in previous_memories.items() if name != agent_name}
                 
-                for future in futures:
-                    try:
-                        results.append(future.result())
-                    except Exception as e:
-                        results.append(e)
-            return results
+                prompt = get_agent_prompt(
+                    st.session_state.current_round,
+                    st.session_state.num_rounds,
+                    agent_name,
+                    st.session_state.initial_problem,
+                    other_agents_memories
+                )
+                
+                # Append the new user prompt to the agent's history
+                st.session_state.conversation_histories[agent_name].append({"role": "user", "content": prompt})
+                
+                # Create a coroutine for the API call
+                task = agent_instance.call_model_with_messages(
+                    st.session_state.conversation_histories[agent_name],
+                    searchType=search_type
+                )
+                tasks.append(task)
 
         # --- Execute the round and display results ---
         with st.spinner(f"Round {st.session_state.current_round} in progress... Agents are thinking..."):

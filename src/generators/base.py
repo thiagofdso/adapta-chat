@@ -144,7 +144,7 @@ class BaseContentGenerator(ABC):
         pass
     
     @abstractmethod
-    async def call_model_with_messages(self, messages: List[Dict[str, str]]) -> str:
+    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None) -> str:
         """Chama o modelo diretamente com uma lista de mensagens.
         
         Este método permite enviar diretamente uma lista de mensagens para o modelo,

@@ -448,7 +448,9 @@ class AdaptaClient:
         self,
         messages: List[Dict[str, str]],
         model: str = "GPT_5",
-        new_line: bool = True
+        new_line: bool = True,
+        searchType: Optional[str] = None,
+        tool: Optional[str] = None
     ) -> Optional[str]:
         """Chama um modelo específico da API Adapta.one.
         
@@ -456,6 +458,8 @@ class AdaptaClient:
             messages: Lista de mensagens para o modelo.
             model: Nome do modelo (GPT, GEMINI, CLAUDE, etc.).
             new_line: Se True, mantém quebras de linha; caso contrário, substitui por espaços.
+            searchType: O tipo de pesquisa a ser realizada (ex: 'normal', 'scientific').
+            tool: A ferramenta a ser usada (ex: 'PERFORM_RESEARCH').
             
         Returns:
             Conteúdo da resposta extraído ou None se houver erro.
@@ -464,7 +468,7 @@ class AdaptaClient:
             logger.debug(f"Iniciando call_model para modelo: {model}")
             logger.debug(f"Número de mensagens: {len(messages)}")
             
-            response = await self._create_conversation_with_retry(messages, model)
+            response = await self._create_conversation_with_retry(messages, model, searchType=searchType, tool=tool)
             
             if response:
                 logger.debug(f"Conversa criada com sucesso. Status: {response.status_code}")
@@ -493,13 +497,17 @@ class AdaptaClient:
     async def _create_conversation(
         self,
         messages: List[Dict[str, str]],
-        model: str
+        model: str,
+        searchType: Optional[str] = None,
+        tool: Optional[str] = None
     ) -> Optional[httpx.Response]:
         """Cria uma nova conversa na API.
         
         Args:
             messages: Lista de mensagens da conversa.
             model: Modelo de IA a ser usado.
+            searchType: O tipo de pesquisa a ser realizada.
+            tool: A ferramenta a ser usada.
             
         Returns:
             Resposta da API ou None em caso de erro.
@@ -532,10 +540,10 @@ class AdaptaClient:
                 "chatType": "CHAT",
                 "agentId": None,
                 "folderId": None,
-                "tool": None,
+                "tool": tool or None, # Use provided tool or default to None
                 "imageModel": "FLUX",
                 "imageAspectRatio": "ONE_TO_ONE",
-                "searchType": "normal",
+                "searchType": searchType, # Use provided searchType, which defaults to None
                 "flowType": None,
                 "shouldEditMessage": False,
                 "shouldGenerateNewFileFromSheetAssistant": False,
@@ -732,7 +740,9 @@ class AdaptaClient:
         messages: List[Dict[str, str]],
         model: str,
         max_retries: int = 3,
-        delay: float = 1.0
+        delay: float = 1.0,
+        searchType: Optional[str] = None,
+        tool: Optional[str] = None
     ) -> Optional[httpx.Response]:
         """Cria uma nova conversa na API com retry automático.
         
@@ -741,6 +751,8 @@ class AdaptaClient:
             model: Modelo de IA a ser usado.
             max_retries: Número máximo de tentativas.
             delay: Delay entre tentativas em segundos.
+            searchType: O tipo de pesquisa a ser realizada.
+            tool: A ferramenta a ser usada.
             
         Returns:
             Resposta da API ou None se todas as tentativas falharem.
@@ -751,7 +763,7 @@ class AdaptaClient:
             try:
                 logger.debug(f"Tentativa {attempt + 1}/{max_retries} para criar conversa")
                 
-                response = await self._create_conversation(messages, model)
+                response = await self._create_conversation(messages, model, searchType=searchType, tool=tool)
                 
                 if response:
                     logger.debug(f"Conversa criada com sucesso na tentativa {attempt + 1}")

@@ -177,7 +177,7 @@ class ClaudeGenerator(BaseContentGenerator):
         except Exception as e:
             raise Exception(f"Erro ao gerar conteúdo personalizado com Claude: {e}")
     
-    async def call_model_with_messages(self, messages: List[Dict[str, str]]) -> str:
+    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None) -> str:
         """Chama o modelo Claude diretamente com uma lista de mensagens.
         
         Este método permite enviar diretamente uma lista de mensagens para o modelo,
@@ -186,6 +186,8 @@ class ClaudeGenerator(BaseContentGenerator):
         
         Args:
             messages: Lista de mensagens no formato [{"role": "user/assistant", "content": "..."}]
+            searchType: O tipo de pesquisa a ser realizada.
+            tool: A ferramenta a ser usada.
             
         Returns:
             Conteúdo da resposta do modelo.
@@ -196,7 +198,7 @@ class ClaudeGenerator(BaseContentGenerator):
         try:
             await self._ensure_client_initialized()
             
-            result = await self.client.call_model(messages, self.model_name, new_line=True)
+            result = await self.client.call_model(messages, self.model_name, new_line=True, searchType=searchType, tool=tool)
             
             if result is None:
                 raise Exception("Falha ao chamar modelo Claude com mensagens")

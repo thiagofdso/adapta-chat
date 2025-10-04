@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ..base import BaseContentGenerator
 from .client import AdaptaClient
-from ...config import settings
+from config import settings
 
 
 class GptO4MiniGenerator(BaseContentGenerator):
@@ -86,10 +86,10 @@ class GptO4MiniGenerator(BaseContentGenerator):
         except Exception as e:
             raise Exception(f"Erro ao gerar conteúdo personalizado com O4-Mini: {e}")
     
-    async def call_model_with_messages(self, messages: List[Dict[str, str]]) -> str:
+    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None) -> str:
         try:
             await self._ensure_client_initialized()
-            result = await self.client.call_model(messages, self.model_name, new_line=True)
+            result = await self.client.call_model(messages, self.model_name, new_line=True, searchType=searchType, tool=tool)
             if result is None:
                 raise Exception("Falha ao chamar modelo O4-Mini com mensagens")
             return result
