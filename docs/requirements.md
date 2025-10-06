@@ -30,3 +30,14 @@ This document outlines the functional requirements of the Adapta-Chat project.
 - **FR-018: Save Debate Results:** The user must be able to save the complete results of the debate (the initial topic, each agent's final response, and the manager's conclusion) to a local `debate.md` file.
 - **FR-019: Debate Reset:** The user must be able to reset the entire debate application at any time to start a new session.
 - **FR-020: Internet Access for Agents:** The user must be able to enable an internet access option (Google search) for all worker agents during the debate.
+
+## Knowledge Pipeline (`pipeline.py`)
+
+- **FR-021: Dual-Mode Operation:** The pipeline must operate in two modes: (1) by processing a specified input folder (`--input`) to discover and register new text files, or (2) if no input is given, by processing items that are already pending in the database.
+- **FR-022: Job Registration and State Management:** The system must use a SQLite database to create and manage the state of all processing jobs and individual knowledge items, tracking their progress through stages (e.g., indexing, generation, complete) and statuses (e.g., pending, in-progress, completed, error).
+- **FR-023: Knowledge Indexing:** For each new file, the system must use the Gemini model to generate a JSON index of all granular knowledge pieces contained within the text.
+- **FR-024: Dynamic De-duplication:** To prevent duplicate entries, the indexing prompt must be dynamically updated with a list of all knowledges that have already been extracted from other files in the same source folder.
+- **FR-025: Knowledge Persistence:** Each knowledge piece from the generated JSON index must be saved as a distinct record in the database with a "pending" status, linked to its parent job.
+- **FR-026: Markdown Generation:** For each pending knowledge record, the system must use the Claude Opus model to generate a detailed, structured Markdown file based on a specific template.
+- **FR-027: Structured File Output:** Generated Markdown files must be saved to a structured, sanitized path based on the source document and knowledge name (`docs/{document-name}/{knowledge-name}.md`).
+- **FR-028: Job Finalization and Cleanup:** Once all knowledge items for a specific job have been successfully generated, the system must update the parent job's stage to "complete" and automatically delete any temporary JSON files created during the indexing stage.
