@@ -17,6 +17,7 @@ from database import (
 from prompt_manager import generate_knowledge_extraction_prompt
 from generators.adapta.gemini_generator import GeminiGenerator
 from generators.adapta.claude_opus_generator import ClaudeOpusGenerator
+from utils.text_cleaner import remove_think_tags
 
 TEMP_INDEX_PATH = 'temp_index'
 DOCS_PATH = 'docs'
@@ -67,13 +68,15 @@ async def run_stage1_index_creation():
             prompt = generate_knowledge_extraction_prompt(file_content, job['folder_path'])
             messages = [{"role": "user", "content": prompt}]
             json_output_str = await generator.call_model_with_messages(messages)
+            json_output_str = remove_think_tags(json_output_str)
             json_filename = f"{os.path.splitext(job['file_name'])[0]}.json"
             temp_json_path = os.path.join(TEMP_INDEX_PATH, json_filename)
+            match = re.search(r'```json\s*(.*?)\s*```', json_output_str, re.DOTALL)
+            if match:
+                json_output_str = match.group(1).strip()
             with open(temp_json_path, 'w', encoding='utf-8') as f:
                 f.write(json_output_str)
             print(f"JSON salvo em {temp_json_path}")
-            if json_output_str.strip().startswith('```json'):
-                json_output_str = json_output_str.strip()[7:-3].strip()
             data = json.loads(json_output_str)
             knowledges = data.get("knowledges", [])
             if knowledges:
@@ -96,7 +99,7 @@ async def process_pending_knowledges():
         print("Nenhum conhecimento pendente para processar.")
         return
 
-    generator = ClaudeOpusGenerator()
+    generator = GeminiGenerator()
     with open(KNOWLEDGE_PROMPT_PATH, 'r', encoding='utf-8') as f:
         prompt_template = f.read()
 
@@ -112,9 +115,11 @@ async def process_pending_knowledges():
             prompt = prompt_template.replace('{knowledge_category}', knowledge['knowledge_category'])
             prompt = prompt.replace('{knowledge_name}', knowledge['knowledge_name'])
             prompt = prompt.replace('{file_content}', file_content)
-
+            #print(prompt)
             messages = [{"role": "user", "content": prompt}]
+            #markdown_output = await generator.call_model_with_messages(messages,chat_id=generator.generate_chat_id())
             markdown_output = await generator.call_model_with_messages(messages)
+            markdown_output = remove_think_tags(markdown_output)
 
             doc_slug = slugify(os.path.splitext(knowledge['job_file_name'])[0])
             knowledge_slug = slugify(knowledge['knowledge_name'])
@@ -178,6 +183,8 @@ async def main():
     if args.input:
         process_input_folder(args.input)
         await run_stage1_index_creation()
+        await process_pending_knowledges()
+        await run_stage3_cleanup()
     else:
         await process_pending_knowledges()
         await run_stage3_cleanup()

@@ -68,3 +68,7 @@ venv.bak/
 # Miscellaneous
 *.log
 *.tmp
+docs
+temp_index
+VTSD
+data

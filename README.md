@@ -79,6 +79,32 @@ To start this application, run:
 poetry run streamlit run src/app_debate.py
 ```
 
+### Knowledge Pipeline (`src/pipeline.py`)
+
+This project includes a multi-stage pipeline for extracting structured "knowledges" from raw text files (`.txt`) and generating detailed Markdown documents from them. The process is managed by a SQLite database (`data/pipeline.db`) and is designed to be fault-tolerant, allowing you to resume the process if it's interrupted.
+
+The pipeline operates in two main modes:
+
+**Mode 1: Initial Processing and Indexing**
+
+This is the first step. You provide a folder of `.txt` files, and the pipeline scans them, creates jobs in the database, and uses an AI model (`Gemini`) to extract a JSON index of "knowledges" from each file.
+
+To run this mode, use the `--input` argument with the path to your folder:
+```sh
+poetry run python src/pipeline.py --input /path/to/your/text_files
+```
+
+**Mode 2: Knowledge Generation**
+
+After the initial indexing, run the pipeline without arguments to process the pending "knowledges." In this stage, the pipeline uses a different AI model (`Claude Opus`) to generate a detailed Markdown file for each knowledge item. These files are saved in the `docs/` directory, organized by the original text file's name.
+
+This command also performs a cleanup, finalizing jobs where all knowledges have been successfully generated.
+```sh
+poetry run python src/pipeline.py
+```
+
+You can run the second command repeatedly to process pending items until all jobs are complete.
+
 ### Programmatic Usage
 
 You can also use the generators directly in your own Python scripts. Here is a basic example:
