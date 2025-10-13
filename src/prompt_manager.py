@@ -17,22 +17,22 @@ def generate_knowledge_extraction_prompt(file_content, folder_path):
     # Lê o template base do prompt
     with open(PROMPT_FILE_PATH, 'r', encoding='utf-8') as f:
         prompt_template = f.read()
-
+    
     # Busca o JSON de conhecimentos existentes
-    existing_knowledges_json = get_existing_knowledges_as_json(folder_path)
+    #existing_knowledges_json = get_existing_knowledges_as_json(folder_path)
 
     # Se houver conhecimentos existentes, modifica o prompt
-    if existing_knowledges_json:
-        dynamic_section = (
-            "# EXISTING KNOWLEDGES\n"
-            f"{existing_knowledges_json}\n\n"
-        )
+    #if existing_knowledges_json:
+    #    dynamic_section = (
+    #        "# EXISTING KNOWLEDGES\n"
+    #        f"{existing_knowledges_json}\n\n"
+    #    )
 
         # Insere a nova regra e a seção de conhecimentos existentes antes das regras gerais
-        prompt_template = prompt_template.replace(
-            '# RULES',
-            f'{dynamic_section}# RULES\n* Não repita os "EXISTING KNOWLEDGES"'
-        )
+    #    prompt_template = prompt_template.replace(
+    #        '# RULES',
+    #        f'{dynamic_section}# RULES\n* Não repita os "EXISTING KNOWLEDGES"'
+    #    )
 
     # Preenche o conteúdo do arquivo no prompt final
     final_prompt = prompt_template.replace('{file_content}', file_content)
