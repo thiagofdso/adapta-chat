@@ -1,40 +1,33 @@
 import os
-from services.knowledge_service import get_existing_knowledges_as_json
 
 PROMPT_FILE_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'knowledge_extraction.txt')
 
-def generate_knowledge_extraction_prompt(file_content, folder_path):
-    """
-    Gera o prompt de extração de conhecimento, inserindo dinamicamente os conhecimentos existentes.
+ADDITIONAL_RULES = [
+    "Continue o indice existente adicionando apenas os elementos novos identificados no documento atual.",
+    "Voce pode criar novas secoes e adicionar novos conhecimentos as secoes existentes sempre que necessario.",
+    "Adicione o arquivo atual a lista \"files\" de cada conhecimento pertinente, mantendo tambem os arquivos ja registrados anteriormente."
+]
 
-    Args:
-        file_content (str): O conteúdo do arquivo a ser processado.
-        folder_path (str): O caminho da pasta onde o arquivo está, para buscar conhecimentos existentes.
 
-    Returns:
-        str: O prompt final e completo.
-    """
-    # Lê o template base do prompt
+def generate_knowledge_extraction_prompt(file_content, folder_path, current_file_name, existing_index_content=None):
+    """Gera o prompt de extracao de conhecimento, adicionando indice atual e regras dinamicas."""
     with open(PROMPT_FILE_PATH, 'r', encoding='utf-8') as f:
         prompt_template = f.read()
-    
-    # Busca o JSON de conhecimentos existentes
-    #existing_knowledges_json = get_existing_knowledges_as_json(folder_path)
 
-    # Se houver conhecimentos existentes, modifica o prompt
-    #if existing_knowledges_json:
-    #    dynamic_section = (
-    #        "# EXISTING KNOWLEDGES\n"
-    #        f"{existing_knowledges_json}\n\n"
-    #    )
+    prompt = prompt_template.replace('{current_file}', current_file_name)
 
-        # Insere a nova regra e a seção de conhecimentos existentes antes das regras gerais
-    #    prompt_template = prompt_template.replace(
-    #        '# RULES',
-    #        f'{dynamic_section}# RULES\n* Não repita os "EXISTING KNOWLEDGES"'
-    #    )
+    if existing_index_content:
+        current_index_block = (
+            "# CURRENT INDEX\n"
+            "```json\n"
+            f"{existing_index_content}\n"
+            "```\n\n"
+        )
+        prompt = prompt.replace('# RULES', current_index_block + '# RULES', 1)
 
-    # Preenche o conteúdo do arquivo no prompt final
-    final_prompt = prompt_template.replace('{file_content}', file_content)
+        rules_block = ''.join(f"* {rule}\n" for rule in ADDITIONAL_RULES)
+        prompt = prompt.replace('# RULES\n', '# RULES\n' + rules_block, 1)
+    else:
+        prompt = prompt.replace('# RULES\n', '# RULES\n* ' + ADDITIONAL_RULES[-1] + '\n', 1)
 
-    return final_prompt
+    return prompt.replace('{file_content}', file_content)

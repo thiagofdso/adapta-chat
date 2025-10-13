@@ -1,30 +1,50 @@
 import sqlite3
 import os
 
-# Define o caminho do banco de dados relativo à localização do script
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'pipeline.db')
 
+
+def add_column_if_not_exists(cursor, table_name, column_name, column_type):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    columns = [row[1] for row in cursor.fetchall()]
+    if column_name not in columns:
+        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+
+def create_files_knowledges_table(cursor):
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS files_knowledges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        knowledge_id INTEGER NOT NULL,
+        file_name TEXT NOT NULL,
+        FOREIGN KEY (knowledge_id) REFERENCES knowledges (id)
+    );
+    ''')
+
+
+def create_knowledge_relations_table(cursor):
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS knowledge_relations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        knowledge_id INTEGER NOT NULL,
+        related_knowledge_id INTEGER NOT NULL,
+        FOREIGN KEY (knowledge_id) REFERENCES knowledges (id)
+    );
+    ''')
+
+
 def get_db_connection():
-    """
-    Cria e retorna uma conexão com o banco de dados.
-    """
     conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row  # Permite acessar colunas por nome
+    conn.row_factory = sqlite3.Row
     return conn
 
+
 def initialize_database():
-    """
-    Inicializa o banco de dados SQLite e cria as tabelas necessárias se não existirem.
-    """
-    # Garante que o diretório de dados exista
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Cria a tabela 'jobs'
-    # stage_id: 1 (criação de índice), 2 (índice gerado), 3 (geração de conhecimento concluída)
-    # status_id: 1 (pendente), 2 (em andamento), 3 (concluído), 4 (erro)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS jobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,8 +57,6 @@ def initialize_database():
     );
     ''')
 
-    # Cria a tabela 'knowledges'
-    # status_id: 1 (pendente), 2 (em andamento), 3 (concluído), 4 (erro)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS knowledges (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,11 +64,21 @@ def initialize_database():
         knowledge_id_from_json INTEGER NOT NULL,
         category TEXT NOT NULL,
         name TEXT NOT NULL,
+        description TEXT,
+        section_id INTEGER,
+        section_title TEXT,
         status_id INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (job_id) REFERENCES jobs (id)
     );
     ''')
+
+    add_column_if_not_exists(cursor, 'knowledges', 'description', 'TEXT')
+    add_column_if_not_exists(cursor, 'knowledges', 'section_id', 'INTEGER')
+    add_column_if_not_exists(cursor, 'knowledges', 'section_title', 'TEXT')
+
+    create_files_knowledges_table(cursor)
+    create_knowledge_relations_table(cursor)
 
     conn.commit()
     conn.close()
@@ -58,71 +86,71 @@ def initialize_database():
 
 
 def create_job(file_path, file_name, folder_path):
-    """
-    Cria um novo job no banco de dados se não existir um para o mesmo file_path.
-    Retorna o ID do job (novo ou existente).
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Verifica se o job já existe
     cursor.execute("SELECT id FROM jobs WHERE file_path = ?", (file_path,))
     existing_job = cursor.fetchone()
 
     if existing_job:
-        print(f"Job para o arquivo {file_name} já existe com o ID: {existing_job['id']}.")
+        print(f"Job para o arquivo {file_name} ja existe com o ID: {existing_job['id']}.")
         conn.close()
         return existing_job['id']
-    else:
-        # Insere um novo job
-        stage_id = 1  # 1: index creation
-        status_id = 1 # 1: pending
-        cursor.execute(
-            "INSERT INTO jobs (file_path, file_name, folder_path, stage_id, status_id) VALUES (?, ?, ?, ?, ?)",
-            (file_path, file_name, folder_path, stage_id, status_id)
-        )
-        new_job_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        print(f"Novo job criado para o arquivo {file_name} com o ID: {new_job_id}.")
-        return new_job_id
+
+    stage_id = 1
+    status_id = 1
+    cursor.execute(
+        "INSERT INTO jobs (file_path, file_name, folder_path, stage_id, status_id) VALUES (?, ?, ?, ?, ?)",
+        (file_path, file_name, folder_path, stage_id, status_id)
+    )
+    new_job_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    print(f"Novo job criado para o arquivo {file_name} com o ID: {new_job_id}.")
+    return new_job_id
+
 
 def find_knowledges_by_folder(folder_path):
-    """
-    Encontra todos os conhecimentos existentes para uma determinada pasta.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT k.category, k.name 
+    cursor.execute('''
+        SELECT
+            k.knowledge_id_from_json,
+            k.category,
+            k.name,
+            k.description,
+            k.section_id,
+            k.section_title,
+            GROUP_CONCAT(DISTINCT f.file_name, '||') AS files,
+            GROUP_CONCAT(DISTINCT r.related_knowledge_id, '||') AS related_ids
         FROM knowledges k
         JOIN jobs j ON k.job_id = j.id
+        LEFT JOIN files_knowledges f ON f.knowledge_id = k.id
+        LEFT JOIN knowledge_relations r ON r.knowledge_id = k.id
         WHERE j.folder_path = ?
-    """, (folder_path,))
+        GROUP BY k.id
+        ORDER BY k.section_id, k.knowledge_id_from_json
+    ''', (folder_path,))
 
     knowledges = cursor.fetchall()
     conn.close()
     return knowledges
 
+
 def get_pending_jobs_by_stage(stage_id):
-    """
-    Busca jobs pendentes (status_id = 1) para um determinado estágio.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT * FROM jobs WHERE stage_id = ? AND status_id = 1", 
+        "SELECT * FROM jobs WHERE stage_id = ? AND status_id = 1",
         (stage_id,)
     )
     jobs = cursor.fetchall()
     conn.close()
     return jobs
 
+
 def update_job_state(job_id, stage_id, status_id):
-    """
-    Atualiza o estágio e o status de um job.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -132,55 +160,102 @@ def update_job_state(job_id, stage_id, status_id):
     conn.commit()
     conn.close()
 
+
+def _insert_files_for_knowledge(cursor, knowledge_id, file_names):
+    if not file_names:
+        return
+    unique_names = []
+    seen = set()
+    for name in file_names:
+        name = (name or '').strip()
+        if name and name not in seen:
+            seen.add(name)
+            unique_names.append(name)
+    cursor.executemany(
+        "INSERT INTO files_knowledges (knowledge_id, file_name) VALUES (?, ?)",
+        [(knowledge_id, name) for name in unique_names]
+    )
+
+
+def _insert_related_for_knowledge(cursor, knowledge_id, related_ids):
+    if not related_ids:
+        return
+    unique_ids = []
+    seen = set()
+    for value in related_ids:
+        try:
+            related_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if related_id <= 0 or related_id in seen:
+            continue
+        seen.add(related_id)
+        unique_ids.append(related_id)
+    cursor.executemany(
+        "INSERT INTO knowledge_relations (knowledge_id, related_knowledge_id) VALUES (?, ?)",
+        [(knowledge_id, rid) for rid in unique_ids]
+    )
+
+
 def add_knowledges_from_json(job_id, knowledges_list):
-    """
-    Insere uma lista de conhecimentos de um JSON no banco de dados.
-    """
+    if not knowledges_list:
+        return
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    records_to_insert = []
-    for knowledge in knowledges_list:
-        records_to_insert.append((
-            job_id,
-            knowledge.get('id'),
-            knowledge.get('category'),
-            knowledge.get('name'),
-            1 # status_id: 1 (pending)
-        ))
 
-    cursor.executemany(
-        "INSERT INTO knowledges (job_id, knowledge_id_from_json, category, name, status_id) VALUES (?, ?, ?, ?, ?)",
-        records_to_insert
-    )
+    for knowledge in knowledges_list:
+        cursor.execute(
+            "INSERT INTO knowledges (job_id, knowledge_id_from_json, category, name, description, section_id, section_title, status_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                job_id,
+                knowledge.get('id'),
+                knowledge.get('category'),
+                knowledge.get('name'),
+                knowledge.get('description'),
+                knowledge.get('section_id'),
+                knowledge.get('section_title'),
+                1
+            )
+        )
+        knowledge_db_id = cursor.lastrowid
+        _insert_files_for_knowledge(cursor, knowledge_db_id, [f.get('name') if isinstance(f, dict) else f for f in knowledge.get('files', [])])
+        _insert_related_for_knowledge(cursor, knowledge_db_id, knowledge.get('knowledge_related', []))
+
     conn.commit()
     conn.close()
 
+
 def get_pending_knowledges():
-    """
-    Busca conhecimentos pendentes (status_id = 1) e seus jobs associados.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT 
-            k.id as knowledge_id,
-            k.category as knowledge_category,
-            k.name as knowledge_name,
-            j.file_path as job_file_path,
-            j.file_name as job_file_name
+    cursor.execute('''
+        SELECT
+            k.id AS knowledge_id,
+            k.knowledge_id_from_json AS knowledge_json_id,
+            k.category AS knowledge_category,
+            k.name AS knowledge_name,
+            k.description AS knowledge_description,
+            k.section_id AS knowledge_section_id,
+            k.section_title AS knowledge_section_title,
+            j.file_path AS job_file_path,
+            j.file_name AS job_file_name,
+            j.folder_path AS job_folder_path,
+            GROUP_CONCAT(DISTINCT f.file_name, '||') AS file_names,
+            GROUP_CONCAT(DISTINCT r.related_knowledge_id, '||') AS related_ids
         FROM knowledges k
         JOIN jobs j ON k.job_id = j.id
+        LEFT JOIN files_knowledges f ON f.knowledge_id = k.id
+        LEFT JOIN knowledge_relations r ON r.knowledge_id = k.id
         WHERE k.status_id = 1
-    """)
+        GROUP BY k.id
+    ''')
     knowledges = cursor.fetchall()
     conn.close()
     return knowledges
 
+
 def update_knowledge_status(knowledge_id, status_id):
-    """
-    Atualiza o status de um conhecimento específico.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -190,10 +265,8 @@ def update_knowledge_status(knowledge_id, status_id):
     conn.commit()
     conn.close()
 
+
 def get_completed_jobs_by_stage(stage_id):
-    """
-    Busca jobs concluídos (status_id = 3) em um determinado estágio.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -204,14 +277,10 @@ def get_completed_jobs_by_stage(stage_id):
     conn.close()
     return jobs
 
+
 def are_all_knowledges_completed_for_job(job_id):
-    """
-    Verifica se todos os conhecimentos de um job estão concluídos (status 3) ou se não há conhecimentos.
-    Retorna False se algum conhecimento estiver pendente, em andamento ou com erro.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Conta quantos conhecimentos NÃO estão com status 3 (concluído)
     cursor.execute(
         "SELECT COUNT(id) FROM knowledges WHERE job_id = ? AND status_id != 3",
         (job_id,)
