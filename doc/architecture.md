@@ -16,13 +16,13 @@ The user interacts with the system via web interfaces built with Streamlit. Thes
 
 ### 2.2. API Client (`src/generators/adapta/client.py`)
 - **Purpose:** Handles all communication with the Adapta.one API.
-- **Details:** An asynchronous client built on `httpx`. It manages authentication, session tokens, and provides core methods for calling the AI models. It is designed to be resilient, handling event loop issues when used with Streamlit.
+- **Details:** An asynchronous client built on `httpx`. It manages authentication, session tokens, file uploads, and provides core methods for calling the AI models. It is designed to be resilient, handling event loop issues when used with Streamlit.
 
 ### 2.3. Generator Abstraction (`src/generators/`)
 - **Purpose:** To provide a consistent interface for different AI models.
-- **Details:** Supports an expanded list of models including Gemini, Claude, GPT, Claude Opus, Deepseek, Grok-4, GPT-OSS, Deepseek-R1, O3, and O4-Mini.
+- **Details:** Supports an expanded list of models including Claude Opus, Gemini, Claude, GPT, Deepseek, Grok-4, GPT-OSS, Deepseek-R1, O3, and O4-Mini.
 - **`base.py`:** Defines the `BaseContentGenerator` abstract class. This class enforces a contract that all specific generator implementations must follow (e.g., must have a `call_model_with_messages` method).
-- **`*_generator.py` files:** These are concrete implementations (`GeminiGenerator`, `ClaudeGenerator`, `GPTGenerator`, `ClaudeOpusGenerator`, `DeepseekGenerator`, `Grok4Generator`, `GptOssGenerator`, `DeepseekR1Generator`, `GptO3Generator`, `GptO4MiniGenerator`). They inherit from `BaseContentGenerator` and use the `AdaptaClient` to perform their tasks. This design makes it easy to add new AI models in the future.
+- **`*_generator.py` files:** These are concrete implementations (`ClaudeOpusGenerator`, `GeminiGenerator`, `ClaudeGenerator`, `GPTGenerator`, `DeepseekGenerator`, `Grok4Generator`, `GptOssGenerator`, `DeepseekR1Generator`, `GptO3Generator`, `GptO4MiniGenerator`). They inherit from `BaseContentGenerator` and use the `AdaptaClient` to perform their tasks. This design makes it easy to add new AI models in the future.
 
 ### 2.4. User Interfaces (`src/app_*.py`)
 - **Purpose:** To provide interactive web interfaces for the user.
@@ -32,11 +32,11 @@ The user interacts with the system via web interfaces built with Streamlit. Thes
 
 ### 2.5. Knowledge Pipeline Components
 - **Purpose:** To provide a multi-stage, fault-tolerant pipeline for extracting and generating knowledge from text files.
-- **`src/pipeline.py`:** Orchestrates the three pipeline stages. It maintains a persistent JSON index per input folder (stored in `indexes/`), merges new outputs with the existing catalog, and writes markdown files into `docs_{folder}` (a folder named after the processed source directory). Each knowledge entry retains the list of source files (`files`) and the IDs of related knowledges (`knowledge_related`).
+- **`src/pipeline.py`:** Orchestrates the three pipeline stages. It consolidates the source `.txt` files (limit de 400k palavras por upload), envia o arquivo combinado via `ClaudeOpusGenerator`, e mantém um índice JSON persistente por pasta (`indexes/`). As saídas de Stage 2 são gravadas em `docs_{folder}`. Cada knowledge registra a lista de arquivos (`files`) e os IDs de conhecimentos relacionados (`knowledge_related`).
 - **`src/database.py`:** Centralizes all SQLite operations. Besides category and name, each knowledge stores description, section metadata, and its file/relationship associations via the `files_knowledges` and `knowledge_relations` tables.
 - **`src/services/knowledge_service.py`:** Groups database rows by section to expose the index in the same JSON format expected by the prompts, including file lists and related IDs.
-- **`src/prompt_manager.py`:** Generates the extraction prompt. When an index already exists, the current JSON and extra rules (continuar o catalogo, permitir insercao de novas secoes, preservar arquivos associados) are injected before chamar o LLM.
-- **Knowledge JSON format:** Stage 1 expects `{ "sections": [...] }`, where each section provides `section_id`, `title`, and a `knowledges` array with items `{ "id", "category", "name", "description", "files", "knowledge_related" }`. The `files` field is a list of objects `{ "name": "arquivo.ext" }`, and `knowledge_related` e um array de IDs inteiros. Legacy flat lists are still normalized; missing descriptions default to an empty string.
+- **`src/prompt_manager.py`:** Generates the extraction prompt. When an index already exists, the current JSON and extra rules (continuar o catalogo, permitir insercao de novas secoes, preservar arquivos e relacionamentos) são injetadas antes de chamar o LLM.
+- **Knowledge JSON format:** Stage 1 expects `{ "sections": [...] }`, where each section provides `section_id`, `title`, and a `knowledges` array with items `{ "id", "category", "name", "description", "files", "knowledge_related" }`. The `files` field is a list of objects `{ "name": "arquivo.ext" }`, and `knowledge_related` é um array de IDs inteiros. Legacy flat lists are still normalized; missing descriptions default to an empty string.
 
 ## 3. Project File Structure
 

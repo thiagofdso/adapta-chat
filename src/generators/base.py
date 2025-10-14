@@ -145,7 +145,7 @@ class BaseContentGenerator(ABC):
         pass
     
     @abstractmethod
-    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None, chat_id: Optional[str] = None) -> str: # <--- Modified signature
+    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None, chat_id: Optional[str] = None, file_ids: Optional[List[str]] = None) -> str: # <--- Modified signature
         """Chama o modelo diretamente com uma lista de mensagens.
         
         Este método permite enviar diretamente uma lista de mensagens para o modelo,
@@ -157,6 +157,7 @@ class BaseContentGenerator(ABC):
             searchType: O tipo de pesquisa a ser realizada.
             tool: A ferramenta a ser usada.
             chat_id: O ID do chat a ser usado para manter a conversa.
+            file_ids: Lista de IDs de arquivos previamente enviados para anexar à chamada.
             
         Returns:
             Conteúdo da resposta do modelo.

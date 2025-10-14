@@ -1,5 +1,6 @@
 {
-    "Agent 1": "Gemini",
-    "Agent 2": "Gemini",
-    "Agent 3": "Gemini"
+    "Agent 1": "Deepseek",
+    "Agent 2": "GPT",
+    "Agent 3": "Claude",
+    "Agent 4": "Claude Opus"
 }

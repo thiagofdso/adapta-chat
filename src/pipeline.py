@@ -3,7 +3,10 @@ import asyncio
 import json
 import os
 import re
-from typing import Dict, List, Optional
+import tempfile
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from database import (
     add_knowledges_from_json,
@@ -16,16 +19,34 @@ from database import (
     update_job_state,
     update_knowledge_status,
 )
-from generators.adapta.claude_opus_generator import ClaudeOpusGenerator  # noqa: F401 - kept for future use
+from generators.adapta.claude_opus_generator import ClaudeOpusGenerator
 from generators.adapta.gemini_generator import GeminiGenerator
+from utils.logger import logger
 from prompt_manager import generate_knowledge_extraction_prompt
 from utils.text_cleaner import remove_think_tags
 
 INDEXES_PATH = 'indexes'
 DOCS_PREFIX = 'docs_'
 KNOWLEDGE_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'knowledge_creation.txt')
+MAX_WORDS_PER_UPLOAD = 400000
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY = 2.0
+MAX_JSON_PARSE_RETRIES = 3
+JSON_PARSE_RETRY_DELAY = 1.0
 
 os.makedirs(INDEXES_PATH, exist_ok=True)
+
+MAX_JSON_PARSE_RETRIES = 3
+JSON_PARSE_RETRY_DELAY = 1.0
+
+os.makedirs(INDEXES_PATH, exist_ok=True)
+
+INITIAL_RETRY_DELAY = 2.0
+
+os.makedirs(INDEXES_PATH, exist_ok=True)
+
+CONTINUATION_PROMPT = "o json está truncado, continue exatamente de onde parou, não repita trechos do json anterior, responda exatamente de forma a manter o json válido e Nao inclua comentarios; sua saida sera salva em arquivo."
+CHAT_LOG_PATH = Path(INDEXES_PATH) / 'chat.md'
 
 
 def slugify(text: str) -> str:
@@ -59,47 +80,314 @@ def save_index_data(index_path: str, index_data: Dict) -> None:
         json.dump(index_data, f, ensure_ascii=False, indent=4)
 
 
+def _count_words(text: str) -> int:
+    return len(re.findall(r"\S+", text))
+
+
+def _coerce_file_name(entry: Any) -> Optional[str]:
+    if entry is None:
+        return None
+    if isinstance(entry, dict):
+        if 'name' in entry and entry['name']:
+            raw_value = entry['name']
+        else:
+            raw_value = None
+            for key, value in entry.items():
+                if value:
+                    raw_value = value
+                    break
+            if raw_value is None:
+                return None
+    else:
+        raw_value = entry
+    if raw_value is None:
+        return None
+    return str(raw_value).strip()
+
+
+def _write_conversation_log(conversation: List[Dict[str, str]]) -> None:
+    try:
+        with CHAT_LOG_PATH.open('w', encoding='utf-8') as chat_file:
+            for exchange in conversation:
+                author = exchange.get('role', '')
+                content = exchange.get('content', '')
+                chat_file.write(f"## {author}\n\n{content}\n\n")
+    except Exception as exc:
+        logger.warning(f"Falha ao registrar conversa em chat.md: {exc}")
+
+
+def _extract_json_candidate(text: str) -> Optional[str]:
+    if not text:
+        return None
+    fenced = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+    if fenced:
+        return fenced.group(1).strip()
+    first_brace = text.find('{')
+    last_brace = text.rfind('}')
+    if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
+        return None
+    return text[first_brace:last_brace + 1].strip()
+
+
+def _has_balanced_brackets(text: str) -> bool:
+    stack: List[str] = []
+    opening = {'{': '}', '[': ']'}
+    closing = {v: k for k, v in opening.items()}
+    in_string = False
+    escape = False
+
+    for ch in text:
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+        elif ch in opening:
+            stack.append(opening[ch])
+        elif ch in closing:
+            if not stack or stack.pop() != ch:
+                return False
+
+    return not stack and not in_string
+
+
+def _looks_truncated(candidate: str, exc: json.JSONDecodeError) -> bool:
+    stripped = candidate.rstrip()
+    if not stripped:
+        return True
+    if not _has_balanced_brackets(stripped):
+        return True
+    if exc.pos >= len(candidate) - 1:
+        return True
+    if not stripped.endswith(('}', ']')):
+        return True
+    return False
+
+
+def _format_file_entry(file_path: str, base_dir: Optional[str], content: str) -> str:
+    if base_dir:
+        try:
+            relative_path = os.path.relpath(file_path, base_dir)
+        except ValueError:
+            relative_path = os.path.basename(file_path)
+    else:
+        relative_path = os.path.relpath(file_path)
+
+    line_count = content.count('\n')
+    if content and not content.endswith('\n'):
+        line_count += 1
+
+    return (
+        "-------- HEADER --------\n"
+        f"{relative_path}\n"
+        "-------- FIM HEADER --------\n"
+        f"{content}\n"
+        "-------- TRAILER --------\n"
+        f"Linhas: {line_count}\n"
+        "-------- FIM TRAILER --------"
+    )
+
+
+def _build_consolidated_text(file_paths: List[str], base_dir: Optional[str]) -> str:
+    if not file_paths:
+        return ""
+
+    entries: List[str] = []
+    total_words = 0
+
+    for path in file_paths:
+        with open(path, 'r', encoding='utf-8') as f:
+            raw_content = f.read()
+        entry = _format_file_entry(path, base_dir, raw_content)
+        total_words += _count_words(entry)
+        if total_words > MAX_WORDS_PER_UPLOAD:
+            raise ValueError(
+                f"Consolidated file would exceed limit of {MAX_WORDS_PER_UPLOAD} words."
+            )
+        entries.append(entry)
+
+    return "\n\n".join(entries)
+
+
+def _create_consolidated_temp_file(file_paths: List[str], base_dir: Optional[str], prefix: str) -> Path:
+    consolidated_text = _build_consolidated_text(file_paths, base_dir)
+    if not consolidated_text.strip():
+        raise ValueError("Nenhum conteudo valido encontrado para consolidar.")
+
+    temp_dir = Path(tempfile.gettempdir())
+    temp_path = temp_dir / f"{prefix}_{uuid.uuid4().hex}.txt"
+    temp_path.write_text(consolidated_text, encoding='utf-8')
+    return temp_path
+
+
+def _prepare_upload_file(
+    file_paths: List[str],
+    base_dir: Optional[str],
+    prefix: str,
+    prefer_original: bool
+) -> Tuple[Path, bool]:
+    if not file_paths:
+        raise ValueError("Nenhum arquivo fonte informado para upload.")
+
+    if prefer_original and len(file_paths) == 1:
+        return Path(file_paths[0]), False
+
+    temp_path = _create_consolidated_temp_file(file_paths, base_dir, prefix)
+    return temp_path, True
+
+
+async def _call_generator_with_upload(
+    generator,
+    prompt: Optional[str],
+    upload_path: Path,
+    cleanup: bool,
+    messages: Optional[List[Dict[str, str]]] = None,
+    tool: Optional[str] = None,
+) -> str:
+    upload_info: Optional[Dict[str, Any]] = None
+    try:
+        upload_info = await generator.client.upload_arquivo(str(upload_path))
+        if not upload_info:
+            raise RuntimeError("Falha ao fazer upload do arquivo consolidado.")
+
+        if messages is None:
+            if prompt is None:
+                raise ValueError("Prompt ou mensagens devem ser fornecidos para chamada ao gerador.")
+            payload_messages = [{'role': 'user', 'content': prompt}]
+        else:
+            payload_messages = messages
+
+        response = await generator.call_model_with_messages(
+            [dict(message) for message in payload_messages],
+            file_ids=[upload_info],
+            tool=tool,
+        )
+    finally:
+        if upload_info:
+            file_id = upload_info.get("id")
+            if file_id:
+                try:
+                    await generator.client.excluir_arquivo(file_id)
+                except Exception:
+                    pass
+        if cleanup:
+            try:
+                upload_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    return response
+
+
+async def _call_with_retries(
+    generator,
+    prompt: Optional[str],
+    source_paths: List[str],
+    base_dir: Optional[str],
+    prefix: str,
+    prefer_original_when_single: bool,
+    max_retries: int = MAX_RETRIES,
+    initial_delay: float = INITIAL_RETRY_DELAY,
+    fallback_generator: Optional[Any] = None,
+    fallback_attempt: Optional[int] = None,
+    messages: Optional[List[Dict[str, str]]] = None,
+    tool: Optional[str] = None,
+) -> str:
+    if not source_paths:
+        raise ValueError("Nenhum arquivo fonte informado para upload.")
+    if prompt is None and messages is None:
+        raise ValueError("Prompt ou mensagens devem ser fornecidos para a chamada ao gerador.")
+
+    delay = initial_delay
+    last_error: Optional[Exception] = None
+
+    for attempt in range(1, max_retries + 1):
+        upload_path: Optional[Path] = None
+        cleanup = False
+        current_generator = generator
+        if (
+            fallback_generator is not None
+            and fallback_attempt is not None
+            and attempt >= fallback_attempt
+        ):
+            current_generator = fallback_generator
+            if attempt == fallback_attempt:
+                logger.info("Usando gerador Gemini como fallback na tentativa final.")
+        try:
+            upload_path, cleanup = _prepare_upload_file(
+                file_paths=source_paths,
+                base_dir=base_dir,
+                prefix=prefix,
+                prefer_original=prefer_original_when_single,
+            )
+            return await _call_generator_with_upload(
+                current_generator,
+                prompt,
+                upload_path,
+                cleanup,
+                messages=messages,
+                tool=tool,
+            )
+        except Exception as exc:
+            last_error = exc
+            if cleanup and upload_path and upload_path.exists():
+                try:
+                    upload_path.unlink()
+                except Exception:
+                    pass
+            if attempt == max_retries:
+                raise
+            logger.warning(f"Tentativa {attempt}/{max_retries} falhou ({exc}). Nova tentativa em {delay:.1f}s...")
+            await asyncio.sleep(delay)
+            delay *= 1.5
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("Erro desconhecido ao chamar o gerador.")
+
+
 def section_key(section_id, section_title):
     return section_id, section_title or ''
 
 
-def _normalize_files_list(files: Optional[List], current_file_name: Optional[str]) -> List[Dict[str, str]]:
+def _normalize_files_list(files: Optional[List], current_file_name: Optional[str]) -> List[str]:
     file_names: List[str] = []
     if files:
         for entry in files:
-            if isinstance(entry, dict):
-                name = entry.get('name')
-            else:
-                name = entry
-            if name:
-                file_names.append(str(name).strip())
+            name = _coerce_file_name(entry)
+            if not name:
+                continue
+            file_names.append(name)
     if current_file_name:
         file_names.append(current_file_name)
 
-    normalized: List[Dict[str, str]] = []
+    normalized: List[str] = []
     seen = set()
     for name in file_names:
         clean = name.strip()
         if clean and clean not in seen:
             seen.add(clean)
-            normalized.append({'name': clean})
+            normalized.append(clean)
     return normalized
 
 
-def _merge_files(existing_files: Optional[List], new_files: Optional[List]) -> List[Dict[str, str]]:
-    merged: List[Dict[str, str]] = []
+def _merge_files(existing_files: Optional[List], new_files: Optional[List]) -> List[str]:
+    merged: List[str] = []
     seen = set()
     for source in (existing_files or []) + (new_files or []):
-        if isinstance(source, dict):
-            name = source.get('name')
-        else:
-            name = source
+        name = _coerce_file_name(source)
         if not name:
             continue
-        clean = str(name).strip()
+        clean = name.strip()
         if clean not in seen:
             seen.add(clean)
-            merged.append({'name': clean})
+            merged.append(clean)
     return merged
 
 
@@ -136,8 +424,34 @@ def _merge_related(existing_related: Optional[List[int]], new_related: Optional[
     return result
 
 
+def _build_files_prompt_segment(file_paths: List[str], base_dir: Optional[str]) -> str:
+    if not file_paths:
+        return ""
+
+    names: List[str] = []
+    seen = set()
+    for path in file_paths:
+        if base_dir:
+            try:
+                name = os.path.relpath(path, base_dir)
+            except ValueError:
+                name = os.path.basename(path)
+        else:
+            name = os.path.basename(path)
+        name = name.strip()
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+
+    if not names:
+        return ""
+
+    listing = "\n".join(f"- {name}" for name in names)
+    return f"\n\n# ARQUIVOS DISPONIVEIS\n{listing}"
+
+
 def _build_existing_maps(existing_index: Optional[Dict]):
-    files_map: Dict[int, List[Dict[str, str]]] = {}
+    files_map: Dict[int, List[str]] = {}
     related_map: Dict[int, List[int]] = {}
     if not existing_index:
         return files_map, related_map
@@ -191,7 +505,7 @@ def _flatten_sections(payload: Dict, current_file_name: str, existing_index: Opt
             entry['section_title'] = section_title
 
             previous_files = files_map.get(knowledge_id, [])
-            current_files = _normalize_files_list(entry.get('files'), current_file_name)
+            current_files = _normalize_files_list(None, current_file_name)
             entry['files'] = _merge_files(previous_files, current_files)
 
             previous_related = related_map.get(knowledge_id, [])
@@ -269,9 +583,9 @@ def _update_index_with_entries(index_data: Dict, entries: List[Dict]) -> Dict:
 
 
 def process_input_folder(folder_path):
-    print(f"Escaneando a pasta de entrada: {folder_path}")
+    logger.info(f"Escaneando a pasta de entrada: {folder_path}")
     if not os.path.isdir(folder_path):
-        print(f"Erro: O caminho '{folder_path}' nao e um diretorio valido.")
+        logger.error(f"O caminho '{folder_path}' nao e um diretorio valido.")
         return
 
     for filename in os.listdir(folder_path):
@@ -281,14 +595,15 @@ def process_input_folder(folder_path):
 
 
 async def run_stage1_index_creation():
-    print('Iniciando Estagio 1: Criacao de Indice de Conhecimento.')
+    logger.info('Iniciando Estagio 1: Criacao de Indice de Conhecimento.')
     pending_jobs = get_pending_jobs_by_stage(stage_id=1)
 
     if not pending_jobs:
-        print('Nenhum job pendente para o Estagio 1.')
+        logger.info('Nenhum job pendente para o Estagio 1.')
         return
 
-    generator = GeminiGenerator()
+    claude_generator = ClaudeOpusGenerator()
+    gemini_generator = GeminiGenerator()
 
     for job in pending_jobs:
         job_id = job['id']
@@ -296,37 +611,93 @@ async def run_stage1_index_creation():
         current_file_name = job['file_name']
         index_path = get_index_file_path(folder_path)
         index_data = load_index_data(index_path)
-        existing_index_content = json.dumps(index_data, ensure_ascii=False, indent=4) if index_data.get('sections') else None
+        existing_index_content = (
+            json.dumps(index_data, ensure_ascii=False, separators=(',', ':'))
+            if index_data.get('sections')
+            else None
+        )
 
-        print(f"Processando job {job_id} para o arquivo: {current_file_name}")
+        logger.info(f"Processando job {job_id} para o arquivo: {current_file_name}")
 
         try:
             update_job_state(job_id, stage_id=1, status_id=2)
-            with open(job['file_path'], 'r', encoding='utf-8') as f:
-                file_content = f.read()
 
-            prompt = generate_knowledge_extraction_prompt(file_content, folder_path, current_file_name, existing_index_content)
-            messages = [{'role': 'user', 'content': prompt}]
-            json_output_str = await generator.call_model_with_messages(messages)
-            json_output_str = remove_think_tags(json_output_str)
-            match = re.search(r"```json\s*(.*?)\s*```", json_output_str, re.DOTALL)
-            if match:
-                json_output_str = match.group(1).strip()
+            prompt = generate_knowledge_extraction_prompt(current_file_name, existing_index_content)
+            source_prompt = _build_files_prompt_segment([job['file_path']], folder_path)
+            if source_prompt:
+                prompt += source_prompt
+            temp_raw_path = Path(INDEXES_PATH) / 'temp.json'
+            conversation: List[Dict[str, str]] = [{'role': 'user', 'content': prompt}]
+            _write_conversation_log(conversation)
+            accumulated_raw = ""
+            accumulated_clean_chunks: List[str] = []
+            continuation_attempts = 0
 
-            data = json.loads(json_output_str)
+            while True:
+                raw_response = await _call_with_retries(
+                    generator=claude_generator,
+                    prompt=None,
+                    source_paths=[job['file_path']],
+                    base_dir=folder_path,
+                    prefix='stage1',
+                    prefer_original_when_single=True,
+                    fallback_generator=gemini_generator,
+                    fallback_attempt=3,
+                    messages=conversation,
+                    tool="",
+                )
+
+                accumulated_raw += raw_response
+                temp_raw_path.write_text(accumulated_raw, encoding='utf-8')
+
+                cleaned_chunk = remove_think_tags(raw_response)
+                accumulated_clean_chunks.append(cleaned_chunk)
+                conversation.append({'role': 'assistant', 'content': cleaned_chunk})
+                _write_conversation_log(conversation)
+
+                combined_clean = ''.join(accumulated_clean_chunks)
+                candidate = _extract_json_candidate(combined_clean)
+
+                if candidate is None:
+                    continuation_attempts += 1
+                    if continuation_attempts > MAX_JSON_PARSE_RETRIES:
+                        raise ValueError("Modelo nao retornou JSON valido apos multiplas tentativas.")
+                    logger.warning("Resposta JSON ausente ou incompleta. Solicitando continuacao ao modelo...")
+                    conversation.append({'role': 'user', 'content': CONTINUATION_PROMPT})
+                    _write_conversation_log(conversation)
+                    continue
+
+                try:
+                    data = json.loads(candidate)
+                    try:
+                        temp_raw_path.unlink()
+                    except FileNotFoundError:
+                        pass
+                    break
+                except json.JSONDecodeError as exc:
+                    if _looks_truncated(candidate, exc):
+                        continuation_attempts += 1
+                        if continuation_attempts > MAX_JSON_PARSE_RETRIES:
+                            raise
+                        logger.warning("JSON truncado detectado. Solicitando continuacao ao modelo...")
+                        conversation.append({'role': 'user', 'content': CONTINUATION_PROMPT})
+                        _write_conversation_log(conversation)
+                        continue
+                    raise
             knowledges = _flatten_sections(data, current_file_name, existing_index=index_data)
             _update_index_with_entries(index_data, knowledges)
             save_index_data(index_path, index_data)
 
             if knowledges:
                 add_knowledges_from_json(job_id, knowledges)
-                print(f"{len(knowledges)} conhecimentos inseridos no banco de dados para o job {job_id}.")
+                logger.info(f"{len(knowledges)} conhecimentos inseridos no banco de dados para o job {job_id}.")
 
             update_job_state(job_id, stage_id=2, status_id=3)
-            print(f"Job {job_id} concluido com sucesso.")
+            logger.info(f"Job {job_id} concluido com sucesso.")
         except Exception as e:
-            print(f"Erro ao processar o job {job_id}: {e}")
+            logger.error(f"Erro ao processar o job {job_id}: {e}")
             update_job_state(job_id, stage_id=1, status_id=4)
+            raise SystemExit(1) from e
 
 
 def _extract_file_names(row) -> List[str]:
@@ -382,14 +753,14 @@ def _lookup_related_names(index_data: Dict, related_ids: List[int]) -> List[str]
 
 
 async def process_pending_knowledges():
-    print('\nIniciando Estagio 2: Criacao de Arquivos de Conhecimento.')
+    logger.info('Iniciando Estagio 2: Criacao de Arquivos de Conhecimento.')
     pending_knowledges = get_pending_knowledges()
 
     if not pending_knowledges:
-        print('Nenhum conhecimento pendente para processar.')
+        logger.info('Nenhum conhecimento pendente para processar.')
         return
 
-    generator = GeminiGenerator()
+    generator = ClaudeOpusGenerator()
     with open(KNOWLEDGE_PROMPT_PATH, 'r', encoding='utf-8') as f:
         prompt_template = f.read()
 
@@ -406,38 +777,43 @@ async def process_pending_knowledges():
         index_data = index_cache[folder_path]
         related_names = _lookup_related_names(index_data, related_ids)
 
-        print(f"Processando conhecimento ID: {knowledge_id} - {knowledge['knowledge_name']}")
+        logger.info(f"Processando conhecimento ID: {knowledge_id} - {knowledge['knowledge_name']}")
 
         try:
             update_knowledge_status(knowledge_id, status_id=2)
 
-            file_blocks: List[str] = []
+            consolidated_sources: List[str] = []
             if source_files:
                 for file_name in source_files:
                     file_path = os.path.join(folder_path, file_name)
                     if os.path.isfile(file_path):
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            file_blocks.append(f"# Arquivo: {file_name}\n{f.read()}")
+                        consolidated_sources.append(file_path)
                     else:
-                        print(f"Aviso: Arquivo {file_name} nao encontrado em {folder_path}.")
+                        logger.warning(f"Arquivo {file_name} nao encontrado em {folder_path}.")
 
-            if not file_blocks:
-                with open(knowledge['job_file_path'], 'r', encoding='utf-8') as f:
-                    default_file = os.path.basename(knowledge['job_file_path'])
-                    file_blocks.append(f"# Arquivo: {default_file}\n{f.read()}")
-
-            combined_content = '\n\n'.join(file_blocks)
+            if not consolidated_sources:
+                consolidated_sources.append(knowledge['job_file_path'])
 
             prompt = prompt_template.replace('{knowledge_category}', knowledge['knowledge_category'])
             prompt = prompt.replace('{knowledge_name}', knowledge['knowledge_name'])
-            prompt = prompt.replace('{file_content}', combined_content)
-
             if related_names:
-                related_block = '\n'.join(f"- {name}" for name in related_names)
-                prompt += '\n\n# CONHECIMENTOS RELACIONADOS\n' + related_block
+                related_block = "Conhecimentos relacionados fornecidos:\n" + "\n".join(f"- {name}" for name in related_names)
+            else:
+                related_block = "Nenhum conhecimento relacionado adicional foi informado."
+            prompt = prompt.replace('{related_context}', related_block)
+            source_prompt = _build_files_prompt_segment(consolidated_sources, folder_path)
+            if source_prompt:
+                prompt += source_prompt
 
-            messages = [{'role': 'user', 'content': prompt}]
-            markdown_output = await generator.call_model_with_messages(messages)
+            markdown_output = await _call_with_retries(
+                generator=generator,
+                prompt=prompt,
+                source_paths=consolidated_sources,
+                base_dir=folder_path,
+                prefix='stage2',
+                prefer_original_when_single=True,
+                tool="",
+            )
             markdown_output = remove_think_tags(markdown_output)
 
             knowledge_slug = slugify(knowledge['knowledge_name'])
@@ -447,30 +823,30 @@ async def process_pending_knowledges():
 
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(markdown_output)
-            print(f"Arquivo Markdown salvo em: {output_path}")
+            logger.info(f"Arquivo Markdown salvo em: {output_path}")
 
             update_knowledge_status(knowledge_id, status_id=3)
-            print(f"Conhecimento {knowledge_id} concluido com sucesso.")
+            logger.info(f"Conhecimento {knowledge_id} concluido com sucesso.")
 
         except Exception as e:
-            print(f"Erro ao processar o conhecimento {knowledge_id}: {e}")
+            logger.error(f"Erro ao processar o conhecimento {knowledge_id}: {e}")
             update_knowledge_status(knowledge_id, status_id=4)
 
 
 async def run_stage3_cleanup():
-    print('\nIniciando Estagio 3: Limpeza e Finalizacao de Jobs.')
+    logger.info('Iniciando Estagio 3: Limpeza e Finalizacao de Jobs.')
     completed_stage2_jobs = get_completed_jobs_by_stage(stage_id=2)
 
     if not completed_stage2_jobs:
-        print('Nenhum job para finalizar.')
+        logger.info('Nenhum job para finalizar.')
         return
 
     for job in completed_stage2_jobs:
         job_id = job['id']
         if are_all_knowledges_completed_for_job(job_id):
-            print(f"Todos os conhecimentos para o job {job_id} estao concluidos. Finalizando...")
+            logger.info(f"Todos os conhecimentos para o job {job_id} estao concluidos. Finalizando...")
             update_job_state(job_id, stage_id=3, status_id=3)
-            print(f"Job {job_id} finalizado com sucesso.")
+            logger.info(f"Job {job_id} finalizado com sucesso.")
 
 
 async def main():

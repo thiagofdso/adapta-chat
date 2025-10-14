@@ -1,6 +1,8 @@
 import sqlite3
 import os
 
+from utils.logger import logger
+
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'pipeline.db')
 
 
@@ -82,7 +84,7 @@ def initialize_database():
 
     conn.commit()
     conn.close()
-    print(f"Banco de dados inicializado com sucesso em {DB_PATH}")
+    logger.info(f"Banco de dados inicializado com sucesso em {DB_PATH}")
 
 
 def create_job(file_path, file_name, folder_path):
@@ -93,7 +95,7 @@ def create_job(file_path, file_name, folder_path):
     existing_job = cursor.fetchone()
 
     if existing_job:
-        print(f"Job para o arquivo {file_name} ja existe com o ID: {existing_job['id']}.")
+        logger.info(f"Job para o arquivo {file_name} ja existe com o ID: {existing_job['id']}.")
         conn.close()
         return existing_job['id']
 
@@ -106,7 +108,7 @@ def create_job(file_path, file_name, folder_path):
     new_job_id = cursor.lastrowid
     conn.commit()
     conn.close()
-    print(f"Novo job criado para o arquivo {file_name} com o ID: {new_job_id}.")
+    logger.info(f"Novo job criado para o arquivo {file_name} com o ID: {new_job_id}.")
     return new_job_id
 
 

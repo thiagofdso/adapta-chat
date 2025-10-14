@@ -9,6 +9,7 @@ from generators.adapta import (
     DeepseekGenerator, Grok4Generator, GptOssGenerator, DeepseekR1Generator,
     GptO3Generator, GptO4MiniGenerator
 )
+from utils.logger import logger
 
 nest_asyncio.apply()
 
@@ -93,7 +94,7 @@ def load_custom_prompts():
     prompts = {}
     if not os.path.exists(PROMPTS_DIR):
         return prompts
-    
+
     for filename in os.listdir(PROMPTS_DIR):
         if filename.endswith(".txt"):
             agent_name = os.path.splitext(filename)[0].replace('_', ' ')
@@ -102,6 +103,7 @@ def load_custom_prompts():
                 with open(file_path, "r", encoding="utf-8") as f:
                     prompts[agent_name] = f.read()
             except Exception as e:
+                logger.error(f"Erro ao carregar prompt personalizado para {agent_name}: {e}")
                 st.write(f"Error loading custom prompt for {agent_name}: {e}") # Keep this as a user-facing error
     return prompts
 
@@ -340,12 +342,23 @@ def main():
                         
                         # --- Auto-save Results ---
                         with st.spinner("Saving results to `debate.md`..."):
-                            md_content = f"# Debate Results\n\n"
+                            md_content = "# Debate Results\n\n"
                             md_content += f"## Topic\n\n{st.session_state.initial_problem}\n\n---\n\n"
-                            md_content += "## Final Agent Responses\n\n"
+
+                            md_content += "## Agent Conversation Histories\n\n"
+                            for agent_name, history in st.session_state.conversation_histories.items():
+                                model_name = st.session_state.worker_agents.get(agent_name, ('Desconhecido',))[0]
+                                md_content += f"### {agent_name} ({model_name})\n\n"
+                                for idx, message in enumerate(history, start=1):
+                                    role = message.get('role', 'unknown').capitalize()
+                                    content = message.get('content', '')
+                                    md_content += f"{idx:02d}. **{role}**\n\n{content}\n\n"
+
+                            md_content += "---\n\n## Final Agent Responses\n\n"
                             for agent_name, response in st.session_state.agent_memories.items():
                                 model_name = st.session_state.worker_agents[agent_name][0]
                                 md_content += f"### {agent_name} ({model_name})\n\n{response}\n\n"
+
                             md_content += "---\n\n## Final Conclusion\n\n"
                             md_content += st.session_state.final_conclusion
                             

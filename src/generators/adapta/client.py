@@ -17,7 +17,19 @@ from utils.logger import logger
 
 # Formatos de arquivo aceitos para upload
 FORMATOS_ACEITOS = {
-    '.txt', '.docx', '.pdf', '.xlsx', '.xls', '.csv', '.png', '.jpg'
+    '.txt', '.docx', '.pdf', '.xlsx', '.xls', '.csv', '.png', '.jpg', '.jpeg'
+}
+
+FORMATOS_MIME = {
+    '.txt': 'text/plain',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.pdf': 'application/pdf',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.xls': 'application/vnd.ms-excel',
+    '.csv': 'text/csv',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
 }
 
 
@@ -353,6 +365,92 @@ class AdaptaClient:
         """
         return FORMATOS_ACEITOS.copy()
     
+    @staticmethod
+    def _prepare_files_payload(file_ids: Optional[List[Any]]) -> List[Dict[str, Any]]:
+        """Normaliza a lista de arquivos para o payload de conversa."""
+        if not file_ids:
+            return []
+
+        normalized: List[Dict[str, Any]] = []
+        for item in file_ids:
+            if isinstance(item, dict):
+                payload_item = dict(item)
+                file_id = payload_item.get("id") or payload_item.get("fileId") or payload_item.get("file_id")
+                if file_id and "id" not in payload_item:
+                    payload_item["id"] = str(file_id)
+                normalized.append(payload_item)
+            else:
+                normalized.append({"id": str(item)})
+        return normalized
+
+    async def obter_arquivos(self) -> List[Dict[str, Any]]:
+        """Recupera a lista de arquivos disponíveis para o usuário autenticado."""
+        await self._ensure_client()
+        await self._update_session()
+
+        headers = self.headers.copy()
+        headers['referer'] = "https://app.adapta.one/"
+        headers['authorization'] = f"Bearer {self.cookies['__session']}"
+        headers['x-user-id'] = self.user_id
+        if self.session_id:
+            headers['x-session-id'] = self.session_id
+
+        response = await self._make_request(
+            "GET",
+            "https://api.adapta.one/api/file",
+            headers=headers
+        )
+
+        payload = response.json()
+        arquivos = payload.get("data", [])
+        logger.debug(f"{len(arquivos)} arquivos retornados pelo endpoint de arquivos.")
+        return arquivos
+
+    async def _resolve_files_payload(self, file_refs: Optional[List[Any]]) -> List[Dict[str, Any]]:
+        """Garante que os arquivos usados em conversas tenham metadados completos."""
+        if not file_refs:
+            return []
+
+        prepared = self._prepare_files_payload(file_refs)
+        missing_metadata = [item for item in prepared if not item or len(item.keys()) == 1]
+
+        if not missing_metadata:
+            return prepared
+
+        arquivos_disponiveis = await self.obter_arquivos()
+        arquivos_por_id = {str(arq.get("id")): arq for arq in arquivos_disponiveis if arq.get("id")}
+
+        resolved: List[Dict[str, Any]] = []
+        for item in prepared:
+            file_id = item.get("id")
+            if file_id and file_id in arquivos_por_id:
+                resolved.append(arquivos_por_id[file_id])
+            else:
+                if len(item.keys()) > 1:
+                    resolved.append(item)
+                else:
+                    logger.warning(f"Arquivo com ID {file_id} não encontrado para anexar na conversa.")
+        return resolved
+
+    async def _resolve_messages_payload(
+        self,
+        messages: List[Dict[str, Any]],
+        default_files: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Normaliza os arquivos presentes dentro de cada mensagem."""
+        resolved_messages: List[Dict[str, Any]] = []
+
+        for message in messages:
+            msg_copy = dict(message)
+            message_files = msg_copy.get("files")
+            if message_files:
+                msg_copy["files"] = await self._resolve_files_payload(message_files)
+            elif default_files and msg_copy.get("role") == "user":
+                msg_copy["files"] = default_files
+            resolved_messages.append(msg_copy)
+
+        return resolved_messages
+    
     async def upload_arquivo(self, caminho_arquivo: str) -> Optional[Dict[str, Any]]:
         """Carrega um arquivo para a API e retorna o ID do arquivo.
         
@@ -378,7 +476,7 @@ class AdaptaClient:
                 logger.error(f"Formato de arquivo não suportado: {extensao}. Formatos aceitos: {', '.join(self.get_formatos_aceitos())}")
                 raise ValueError(f"Formato de arquivo não suportado: {extensao}. Formatos aceitos: {', '.join(self.get_formatos_aceitos())}")
             
-            url = 'https://adapta-one-services-production.up.railway.app/v1/files'
+            url = "https://api.adapta.one/api/file/direct-upload-url"
             await self._ensure_client()
             await self._update_session()
             
@@ -386,23 +484,79 @@ class AdaptaClient:
             arquivo_headers['origin'] = "https://app.adapta.one"
             arquivo_headers['referer'] = "https://app.adapta.one/"
             arquivo_headers['authorization'] = f"Bearer {self.cookies['__session']}"
+            arquivo_headers['content-type'] = 'application/json'
+            arquivo_headers['x-user-id'] = self.user_id
+
+            tamanho_bytes = file_path.stat().st_size
+            mime_type = FORMATOS_MIME.get(extensao, 'application/octet-stream')
+
+            inicio_payload = {
+                "originalFilename": file_path.name,
+                "mimeType": mime_type,
+                "sizeInBytes": tamanho_bytes,
+                "toCompany": False
+            }
+
+            response = await self._make_request(
+                "POST",
+                url,
+                headers=arquivo_headers,
+                json=inicio_payload
+            )
             
-            # Remove content-type para permitir que httpx defina automaticamente
-            arquivo_headers.pop('content-type', None)
-            
-            with open(file_path, 'rb') as file:
-                files = {'file': (file_path.name, file)}
-                
-                response = await self._make_request(
-                    "POST", 
-                    url, 
-                    headers=arquivo_headers, 
-                    files=files
+            data = response.json()
+            upload_data = data.get("data")
+            if not upload_data:
+                logger.error(f"Resposta inválida da API ao solicitar URL de upload: {data}")
+                return None
+
+            upload_url = upload_data.get("uploadUrl")
+            file_key = upload_data.get("fileKey")
+            required_headers = upload_data.get("requiredHeaders") or {}
+
+            if not upload_url or not file_key:
+                logger.error(f"Dados essenciais ausentes na resposta de upload: {upload_data}")
+                return None
+
+            if not self.client:
+                logger.error("Cliente HTTP não inicializado para upload S3")
+                raise RuntimeError("Cliente HTTP não inicializado para upload S3")
+
+            upload_headers = dict(required_headers)
+            upload_headers.setdefault("Content-Type", mime_type)
+
+            file_bytes = file_path.read_bytes()
+
+            try:
+                put_response = await self.client.put(
+                    upload_url,
+                    headers=upload_headers,
+                    content=file_bytes
                 )
-                
-                data = response.json()
-                logger.debug(f"Arquivo carregado com sucesso: {data}")
-                return data
+                put_response.raise_for_status()
+            except httpx.HTTPError as e:
+                logger.error(f"Erro ao enviar arquivo para storage S3: {e}")
+                raise
+
+            metadata_payload = {
+                "fileKey": file_key,
+                "sizeInBytes": tamanho_bytes,
+                "mimeType": mime_type,
+                "originalFilename": file_path.name,
+                "toCompany": False
+            }
+
+            metadata_response = await self._make_request(
+                "POST",
+                "https://api.adapta.one/api/file/metadata",
+                headers=arquivo_headers,
+                json=metadata_payload
+            )
+
+            metadata_data = metadata_response.json()
+            #print(metadata_data)
+            logger.debug(f"Arquivo finalizado com sucesso: {metadata_data}")
+            return metadata_data.get("data", metadata_data)
                 
         except FileNotFoundError:
             logger.error(f"Arquivo não encontrado: {caminho_arquivo}")
@@ -424,7 +578,7 @@ class AdaptaClient:
             Status da operação ou None em caso de erro.
         """
         try:
-            url = f'https://app.adapta.one/api/v1/file/{id_arquivo}'
+            url = f'https://api.adapta.one/api/file/{id_arquivo}'
             await self._ensure_client()
             await self._update_session()
             
@@ -436,9 +590,9 @@ class AdaptaClient:
             response = await self._make_request("DELETE", url, headers=arquivo_headers)
             data = response.json()
             
-            status = data.get("status")
-            logger.debug(f"Arquivo excluído com sucesso. Status: {status}")
-            return status
+            resultado = data.get("data", data.get("status", data))
+            logger.debug(f"Arquivo excluído com sucesso. Resultado: {resultado}")
+            return resultado
             
         except Exception as e:
             logger.error(f"Erro ao excluir arquivo: {e}")
@@ -451,7 +605,8 @@ class AdaptaClient:
         new_line: bool = True,
         searchType: Optional[str] = None,
         tool: Optional[str] = None,
-        chat_id: Optional[str] = None
+        chat_id: Optional[str] = None,
+        file_ids: Optional[List[Any]] = None
     ) -> Optional[str]:
         """Chama um modelo específico da API Adapta.one.
         
@@ -462,6 +617,7 @@ class AdaptaClient:
             searchType: O tipo de pesquisa a ser realizada (ex: 'normal', 'scientific').
             tool: A ferramenta a ser usada (ex: 'PERFORM_RESEARCH').
             chat_id: O ID do chat a ser usado para manter a conversa.
+            file_ids: Lista opcional de IDs de arquivos a serem anexados na requisição.
             
         Returns:
             Conteúdo da resposta extraído ou None se houver erro.
@@ -469,8 +625,18 @@ class AdaptaClient:
         try:
             logger.debug(f"Iniciando call_model para modelo: {model}")
             logger.debug(f"Número de mensagens: {len(messages)}")
+
+            arquivos_resolvidos = await self._resolve_files_payload(file_ids)
+            mensagens_resolvidas = await self._resolve_messages_payload(messages, arquivos_resolvidos)
             
-            response = await self._create_conversation_with_retry(messages, model, searchType=searchType, tool=tool, chat_id=chat_id)
+            response = await self._create_conversation_with_retry(
+                mensagens_resolvidas,
+                model,
+                searchType=searchType,
+                tool=tool,
+                chat_id=chat_id,
+                files_payload=arquivos_resolvidos
+            )
             
             if response:
                 logger.debug(f"Conversa criada com sucesso. Status: {response.status_code}")
@@ -498,11 +664,12 @@ class AdaptaClient:
     
     async def _create_conversation(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: str,
         searchType: Optional[str] = None,
         tool: Optional[str] = None,
-        chat_id: Optional[str] = None
+        chat_id: Optional[str] = None,
+        files_payload: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[httpx.Response]:
         """Cria uma nova conversa na API.
         
@@ -512,6 +679,7 @@ class AdaptaClient:
             searchType: O tipo de pesquisa a ser realizada.
             tool: A ferramenta a ser usada.
             chat_id: O ID do chat a ser usado para manter a conversa.
+            files_payload: Lista opcional com os arquivos anexados ao chat.
             
         Returns:
             Resposta da API ou None em caso de erro.
@@ -536,10 +704,13 @@ class AdaptaClient:
             # Use provided chat_id or generate a new one
             current_chat_id = chat_id if chat_id else self._generate_random_id()
             logger.debug(f"Chat ID usado: {current_chat_id}")
+
+            arquivos_payload = files_payload or []
+            mensagens_payload = messages
             
             payload = {
-                "messages": messages,
-                "files": [],
+                "messages": mensagens_payload,
+                "files": arquivos_payload,
                 "chatAiModel": model,
                 "chatId": current_chat_id,
                 "chatType": "CHAT",
@@ -741,13 +912,14 @@ class AdaptaClient:
     
     async def _create_conversation_with_retry(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: str,
         max_retries: int = 3,
         delay: float = 1.0,
         searchType: Optional[str] = None,
         tool: Optional[str] = None,
-        chat_id: Optional[str] = None
+        chat_id: Optional[str] = None,
+        files_payload: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[httpx.Response]:
         """Cria uma nova conversa na API com retry automático.
         
@@ -759,6 +931,7 @@ class AdaptaClient:
             searchType: O tipo de pesquisa a ser realizada.
             tool: A ferramenta a ser usada.
             chat_id: O ID do chat a ser usado para manter a conversa.
+            file_ids: Lista opcional de IDs de arquivos anexados ao chat.
             
         Returns:
             Resposta da API ou None se todas as tentativas falharem.
@@ -769,7 +942,14 @@ class AdaptaClient:
             try:
                 logger.debug(f"Tentativa {attempt + 1}/{max_retries} para criar conversa")
                 
-                response = await self._create_conversation(messages, model, searchType=searchType, tool=tool, chat_id=chat_id)
+                response = await self._create_conversation(
+                    messages,
+                    model,
+                    searchType=searchType,
+                    tool=tool,
+                    chat_id=chat_id,
+                    files_payload=files_payload
+                )
                 
                 if response:
                     logger.debug(f"Conversa criada com sucesso na tentativa {attempt + 1}")

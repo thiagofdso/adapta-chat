@@ -8,7 +8,9 @@ Your objective is to:
 The file is a transcript of a online course.
 
 # CURRENT FILE
+```
 {current_file}
+```
 
 # KNOWLEDGE EXTRACTION CRITERIA
 Extract knowledge pieces that are:
@@ -23,52 +25,21 @@ Extract knowledge pieces that are:
 
 # OUTPUT FORMAT SAMPLE
 <format>
-{
-   "sections": [
-       {
-           "section_id": 1,
-           "title": "section 1",
-           "knowledges": [
-               {
-                   "id": 1,
-                   "category": "estrategia",
-                   "name": "como aprender 10x mais rapido",
-                   "description": "Explica passo a passo como acelerar o aprendizado com revisoes diarias",
-                   "files": [
-                       {"name": "aula01.txt"},
-                       {"name": "aula02.txt"}
-                   ],
-                   "knowledge_related": [2, 3]
-               },
-               {
-                   "id": 2,
-                   "category": "metrica",
-                   "name": "tempo de resposta",
-                   "description": "Tempo medio para responder a uma duvida do aluno",
-                   "files": [
-                       {"name": "relatorio_metricas.txt"}
-                   ],
-                   "knowledge_related": []
-               }
-           ]
-       },
-       ...
-   ]
-}
+{"sections":[{"section_id":1,"title":"section 1","knowledges":[{"id":1,"category":"estrategia","name":"como aprender 10x mais rapido","description":"Explica passo a passo como acelerar o aprendizado com revisoes diarias","files":["aula01.txt","aula02.txt"],"knowledge_related":[2,3]},{"id":2,"category":"metrica","name":"tempo de resposta","description":"Tempo medio para responder a uma duvida do aluno","files":["relatorio_metricas.txt"],"knowledge_related":[]}]}]}
 </format>
 
 
 # RULES
 * Write in Portuguese.
-* Respond only with the JSON templated in <format>.
+* Respond only with the code JSON templated in <format>.
 * Mantenha os itens identificados como base de conhecimento; evite concentrar muitas ideias em um unico knowledge.
 * Retorne um array "sections"; cada secao deve conter "section_id", "title" e um array "knowledges".
-* Cada knowledge precisa de "id", "category", "name", "description" (texto curto e objetivo), "files" (lista de objetos com "name") e "knowledge_related" (array de IDs inteiros de conhecimentos relacionados; use [] quando nao houver).
-* Sempre inclua o arquivo atual em "files" quando o conhecimento for identificado neste documento.
-* Use IDs consistentes ao relacionar conhecimentos (referencie os IDs definidos no proprio indice).
+* Cada knowledge precisa de "id", "category", "name", "description" (texto curto e objetivo), "files" (lista de nomes de arquivos em string) e "knowledge_related" (array de IDs inteiros de conhecimentos relacionados; use [] quando nao houver, maximo de 6 arquivos por conhecimento).
+* Evite inserir aspas duplas dentro dos valores de strings. Se for indispensavel, escape-as usando \\\" ou substitua por apostrofos.
+* Sempre inclua o arquivo atual em "files" quando o conhecimento for identificado neste documento. Use exatamente o nome fornecido e nao duplique nomes.
+* Preserve IDs, arquivos e relacionamentos que ja existirem no indice atual.
+* ignore conhecimentos sobre suporte de curso, como baixar arquivos, service desk, contatos, grupos
+* Não adicione informação sobre especialistas   
 * Nao inclua comentarios; sua saida sera salva em arquivo.
 
-
-Here is the document!
-
-{file_content}
+Os arquivos de referencia estao anexados a esta conversa.

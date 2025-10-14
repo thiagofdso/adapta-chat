@@ -6,6 +6,7 @@ from generators.adapta import (
     DeepseekGenerator, Grok4Generator, GptOssGenerator, DeepseekR1Generator,
     GptO3Generator, GptO4MiniGenerator
 )
+from utils.logger import logger
 
 nest_asyncio.apply()
 
@@ -141,6 +142,7 @@ def main():
 
             except Exception as e:
                 error_message = f"An error occurred: {e}"
+                logger.exception("Erro ao processar mensagem no app_chat")
                 message_placeholder.error(error_message)
                 st.session_state.messages.append({"role": "assistant", "content": error_message})
 

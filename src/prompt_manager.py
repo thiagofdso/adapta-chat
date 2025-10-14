@@ -5,11 +5,12 @@ PROMPT_FILE_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'knowledge
 ADDITIONAL_RULES = [
     "Continue o indice existente adicionando apenas os elementos novos identificados no documento atual.",
     "Voce pode criar novas secoes e adicionar novos conhecimentos as secoes existentes sempre que necessario.",
-    "Adicione o arquivo atual a lista \"files\" de cada conhecimento pertinente, mantendo tambem os arquivos ja registrados anteriormente."
+    "Adicione o arquivo atual a lista \"files\" de cada conhecimento pertinente, mantendo tambem os arquivos ja registrados anteriormente.",
+    "Quando identificar relacoes entre conhecimentos, preencha \"knowledge_related\" com os IDs correspondentes e mantenha valores existentes."
 ]
 
 
-def generate_knowledge_extraction_prompt(file_content, folder_path, current_file_name, existing_index_content=None):
+def generate_knowledge_extraction_prompt(current_file_name, existing_index_content=None):
     """Gera o prompt de extracao de conhecimento, adicionando indice atual e regras dinamicas."""
     with open(PROMPT_FILE_PATH, 'r', encoding='utf-8') as f:
         prompt_template = f.read()
@@ -30,4 +31,4 @@ def generate_knowledge_extraction_prompt(file_content, folder_path, current_file
     else:
         prompt = prompt.replace('# RULES\n', '# RULES\n* ' + ADDITIONAL_RULES[-1] + '\n', 1)
 
-    return prompt.replace('{file_content}', file_content)
+    return prompt

@@ -86,10 +86,10 @@ class DeepseekR1Generator(BaseContentGenerator):
         except Exception as e:
             raise Exception(f"Erro ao gerar conteúdo personalizado com Deepseek-R1: {e}")
     
-    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None, chat_id: Optional[str] = None) -> str:
+    async def call_model_with_messages(self, messages: List[Dict[str, str]], searchType: Optional[str] = None, tool: Optional[str] = None, chat_id: Optional[str] = None, file_ids: Optional[List[str]] = None) -> str:
         try:
             await self._ensure_client_initialized()
-            result = await self.client.call_model(messages, self.model_name, new_line=True, searchType=searchType, tool=tool, chat_id=chat_id)
+            result = await self.client.call_model(messages, self.model_name, new_line=True, searchType=searchType, tool=tool, chat_id=chat_id, file_ids=file_ids)
             if result is None:
                 raise Exception("Falha ao chamar modelo Deepseek-R1 com mensagens")
             return result
