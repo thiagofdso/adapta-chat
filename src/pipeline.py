@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import copy
 import json
 import os
 import re
@@ -45,9 +46,9 @@ INITIAL_RETRY_DELAY = 2.0
 
 os.makedirs(INDEXES_PATH, exist_ok=True)
 
-CONTINUATION_PROMPT = "o json está truncado, continue exatamente de onde parou, não repita trechos do json anterior, responda exatamente de forma a manter o json válido e Nao inclua comentarios; sua saida sera salva em arquivo."
 CHAT_LOG_PATH = Path(INDEXES_PATH) / 'chat.md'
-
+MAX_PATCH_RETRIES = 3
+VALIDATOR_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'knowledge_extraction_continuation_validator.txt')
 
 def slugify(text: str) -> str:
     text = text.lower()
@@ -242,19 +243,20 @@ def _prepare_upload_file(
     return temp_path, True
 
 
-async def _call_generator_with_upload(
+async def _call_generator_with_uploads(
     generator,
     prompt: Optional[str],
-    upload_path: Path,
-    cleanup: bool,
+    uploads: List[Tuple[Path, bool]],
     messages: Optional[List[Dict[str, str]]] = None,
     tool: Optional[str] = None,
 ) -> str:
-    upload_info: Optional[Dict[str, Any]] = None
+    upload_infos: List[Tuple[Dict[str, Any], bool, Path]] = []
     try:
-        upload_info = await generator.client.upload_arquivo(str(upload_path))
-        if not upload_info:
-            raise RuntimeError("Falha ao fazer upload do arquivo consolidado.")
+        for upload_path, cleanup in uploads:
+            upload_info = await generator.client.upload_arquivo(str(upload_path))
+            if not upload_info:
+                raise RuntimeError(f"Falha ao fazer upload do arquivo: {upload_path}")
+            upload_infos.append((upload_info, cleanup, upload_path))
 
         if messages is None:
             if prompt is None:
@@ -265,22 +267,22 @@ async def _call_generator_with_upload(
 
         response = await generator.call_model_with_messages(
             [dict(message) for message in payload_messages],
-            file_ids=[upload_info],
+            file_ids=[info for info, _, _ in upload_infos],
             tool=tool,
         )
     finally:
-        if upload_info:
-            file_id = upload_info.get("id")
+        for upload_info, cleanup, upload_path in upload_infos:
+            file_id = upload_info.get("id") if upload_info else None
             if file_id:
                 try:
                     await generator.client.excluir_arquivo(file_id)
                 except Exception:
                     pass
-        if cleanup:
-            try:
-                upload_path.unlink()
-            except FileNotFoundError:
-                pass
+            if cleanup:
+                try:
+                    upload_path.unlink()
+                except FileNotFoundError:
+                    pass
 
     return response
 
@@ -464,6 +466,241 @@ def _build_existing_maps(existing_index: Optional[Dict]):
     return files_map, related_map
 
 
+def _diagnose_patch_failure(index_data: Dict, operations: List[Dict[str, Any]]) -> Tuple[int, Optional[Dict[str, Any]], Optional[Exception]]:
+    snapshot = copy.deepcopy(index_data)
+    for idx, operation in enumerate(operations, start=1):
+        try:
+            snapshot = _apply_json_patch(snapshot, [operation])
+        except Exception as exc:
+            return idx, operation, exc
+    return len(operations), None, None
+
+
+
+
+
+def _strip_code_fences(text: Optional[str]) -> Optional[str]:
+    if text is None:
+        return None
+    stripped = text.strip()
+    if stripped.startswith('```') and stripped.endswith('```'):
+        stripped = stripped[3:-3]
+    elif stripped.startswith('```json') and stripped.endswith('```'):
+        stripped = stripped[7:-3]
+    return stripped.strip() if stripped else stripped
+
+def _build_validator_prompt(model_output: str) -> str:
+    with open(VALIDATOR_PROMPT_PATH, 'r', encoding='utf-8') as f:
+        template = f.read()
+    return template.replace('{model_output}', model_output.strip())
+
+
+async def _run_patch_validator(generator, job_file_path: str, folder_path: str, model_output: str) -> str:
+    prompt = _build_validator_prompt(model_output)
+    response = await _call_with_retries(
+        generator=generator,
+        prompt=prompt,
+        source_paths=[job_file_path],
+        base_dir=folder_path,
+        prefix='stage1-validator',
+        prefer_original_when_single=True,
+    )
+    return remove_think_tags(response).strip()
+
+
+async def _ensure_valid_json_patch(candidate: Optional[str], raw_output: str, generator, job_file_path: str, folder_path: str) -> Tuple[Dict, str]:
+    attempts = 0
+    current_candidate = candidate
+    validator_input = raw_output
+    stripped_raw = _strip_code_fences(raw_output)
+    if current_candidate is None and stripped_raw:
+        current_candidate = stripped_raw
+
+    while True:
+        if current_candidate is not None:
+            normalized = _strip_code_fences(current_candidate) or current_candidate
+            try:
+                data = json.loads(normalized)
+                return data, normalized
+            except json.JSONDecodeError as exc:
+                logger.warning(f'JSON invalido detectado ({exc}). Enviando ao validador (tentativa {attempts + 1}/{MAX_JSON_PARSE_RETRIES}).')
+                validator_input = normalized
+        else:
+            logger.warning(f'JSON nao detectado. Enviando ao validador (tentativa {attempts + 1}/{MAX_JSON_PARSE_RETRIES}).')
+            validator_input = stripped_raw or raw_output
+        attempts += 1
+        if attempts > MAX_JSON_PARSE_RETRIES:
+            raise ValueError('Nao foi possivel obter JSON valido apos validacao.')
+        validator_response = await _run_patch_validator(generator, job_file_path, folder_path, validator_input)
+        validator_response = validator_response.strip()
+        current_candidate = _extract_json_candidate(validator_response) or validator_response
+
+
+def _split_json_pointer(path: str) -> List[str]:
+    if not path:
+        return []
+    if path == '/':
+        return []
+    if not path.startswith('/'):
+        raise ValueError(f"Caminho JSON Pointer invalido: {path}")
+    parts = path.split('/')[1:]
+    tokens: List[str] = []
+    for part in parts:
+        token = part.replace('~1', '/').replace('~0', '~')
+        tokens.append(token)
+    return tokens
+
+
+def _coerce_list_index(token: str, sequence: List[Any], allow_end: bool) -> int:
+    if token == '-' and allow_end:
+        return len(sequence)
+    try:
+        index = int(token)
+    except ValueError as exc:
+        raise ValueError(f"Indice de lista invalido: {token}") from exc
+    if index < 0:
+        raise IndexError(f"Indice fora do intervalo: {token}")
+
+    if index < len(sequence):
+        return index
+
+    if allow_end and index == len(sequence):
+        return index
+
+    # Fallback: tratar token como identificador do objeto (e.g., knowledge id ou section_id)
+    for idx, item in enumerate(sequence):
+        if isinstance(item, dict):
+            if item.get('id') == index or item.get('section_id') == index:
+                return idx
+    raise IndexError(f"Indice fora do intervalo: {token}")
+
+
+def _resolve_parent_and_key(document: Any, tokens: List[str]):
+    if not tokens:
+        return None, None
+    parent = document
+    for token in tokens[:-1]:
+        if isinstance(parent, list):
+            idx = _coerce_list_index(token, parent, allow_end=False)
+            parent = parent[idx]
+        elif isinstance(parent, dict):
+            if token not in parent:
+                raise KeyError(f"Caminho inexistente: {token}")
+            parent = parent[token]
+        else:
+            raise TypeError("Estrutura JSON inesperada ao resolver JSON Pointer.")
+    return parent, tokens[-1]
+
+
+def _apply_json_patch(document: Dict, operations: List[Dict[str, Any]]) -> Dict:
+    patched = copy.deepcopy(document)
+    for op in operations:
+        if not isinstance(op, dict):
+            raise ValueError("Operacao JSON Patch invalida: esperado objeto.")
+        operator = op.get('op')
+        path = op.get('path', '')
+        tokens = _split_json_pointer(path)
+
+        if operator == 'add':
+            value = op.get('value')
+            if not tokens:
+                patched = value
+                continue
+            parent, key = _resolve_parent_and_key(patched, tokens)
+            if isinstance(parent, list):
+                index = _coerce_list_index(key, parent, allow_end=True)
+                if index == len(parent):
+                    parent.append(value)
+                else:
+                    parent.insert(index, value)
+            elif isinstance(parent, dict):
+                parent[key] = value
+            else:
+                raise TypeError("Operacao add aplicada a tipo nao suportado.")
+        elif operator == 'replace':
+            value = op.get('value')
+            if not tokens:
+                patched = value
+                continue
+            parent, key = _resolve_parent_and_key(patched, tokens)
+            if isinstance(parent, list):
+                index = _coerce_list_index(key, parent, allow_end=False)
+                parent[index] = value
+            elif isinstance(parent, dict):
+                if key not in parent:
+                    raise KeyError(f"Caminho inexistente para replace: {path}")
+                parent[key] = value
+            else:
+                raise TypeError("Operacao replace aplicada a tipo nao suportado.")
+        elif operator == 'remove':
+            if not tokens:
+                raise ValueError("Nao e permitido remover o documento inteiro.")
+            parent, key = _resolve_parent_and_key(patched, tokens)
+            if isinstance(parent, list):
+                index = _coerce_list_index(key, parent, allow_end=False)
+                del parent[index]
+            elif isinstance(parent, dict):
+                if key not in parent:
+                    raise KeyError(f"Caminho inexistente para remove: {path}")
+                del parent[key]
+            else:
+                raise TypeError("Operacao remove aplicada a tipo nao suportado.")
+        else:
+            raise ValueError(f"Operacao JSON Patch nao suportada: {operator}")
+    return patched
+
+
+def _extract_patch_operations(payload: Any) -> List[Dict[str, Any]]:
+    if isinstance(payload, list):
+        operations = payload
+    elif isinstance(payload, dict):
+        if 'patch' in payload:
+            operations = payload['patch']
+        elif 'operations' in payload:
+            operations = payload['operations']
+        else:
+            raise ValueError("Estrutura JSON invalida: campo 'patch' nao encontrado.")
+    else:
+        raise ValueError("Resposta inesperada: esperado objeto JSON Patch ou lista de operacoes.")
+
+    if not isinstance(operations, list):
+        raise ValueError("Campo 'patch' deve ser uma lista de operacoes.")
+    return operations
+
+
+def _build_knowledge_lookup(index_data: Dict) -> Dict[int, Tuple[int, str, Dict[str, Any]]]:
+    lookup: Dict[int, Tuple[int, str, Dict[str, Any]]] = {}
+    sections = index_data.get('sections') or []
+    for idx, section in enumerate(sections, start=1):
+        section_id = section.get('section_id', idx)
+        title = section.get('title') or f'section {section_id}'
+        for knowledge in section.get('knowledges', []) or []:
+            knowledge_id = knowledge.get('id')
+            if isinstance(knowledge_id, int):
+                lookup[knowledge_id] = (section_id, title, knowledge)
+    return lookup
+
+
+def _build_entries_from_lookup(knowledge_ids: List[int], lookup: Dict[int, Tuple[int, str, Dict[str, Any]]], current_file_name: str) -> List[Dict]:
+    entries: List[Dict] = []
+    for knowledge_id in knowledge_ids:
+        if knowledge_id not in lookup:
+            continue
+        section_id, section_title, knowledge = lookup[knowledge_id]
+        entry = {
+            'id': knowledge_id,
+            'category': knowledge.get('category', ''),
+            'name': knowledge.get('name', ''),
+            'description': knowledge.get('description', ''),
+            'files': _normalize_files_list(knowledge.get('files'), current_file_name),
+            'knowledge_related': _normalize_related_list(knowledge.get('knowledge_related'), knowledge_id),
+            'section_id': section_id,
+            'section_title': section_title,
+        }
+        entries.append(entry)
+    return entries
+
+
 def _flatten_sections(payload: Dict, current_file_name: str, existing_index: Optional[Dict] = None) -> List[Dict]:
     sections = payload.get('sections')
     if sections is None:
@@ -611,33 +848,35 @@ async def run_stage1_index_creation():
         current_file_name = job['file_name']
         index_path = get_index_file_path(folder_path)
         index_data = load_index_data(index_path)
-        existing_index_content = (
-            json.dumps(index_data, ensure_ascii=False, separators=(',', ':'))
-            if index_data.get('sections')
-            else None
-        )
+        has_existing_index = bool(index_data.get('sections'))
+        index_file_for_prompt = index_path if has_existing_index else None
+        index_before = copy.deepcopy(index_data) if has_existing_index else None
 
         logger.info(f"Processando job {job_id} para o arquivo: {current_file_name}")
 
         try:
-            update_job_state(job_id, stage_id=1, status_id=2)
-
-            prompt = generate_knowledge_extraction_prompt(current_file_name, existing_index_content)
-            source_prompt = _build_files_prompt_segment([job['file_path']], folder_path)
+            prompt = generate_knowledge_extraction_prompt(current_file_name, index_file_for_prompt)
+            source_files = [job['file_path']]
+            if has_existing_index:
+                source_files.append(index_path)
+            source_prompt = _build_files_prompt_segment(source_files, folder_path)
             if source_prompt:
                 prompt += source_prompt
             temp_raw_path = Path(INDEXES_PATH) / 'temp.json'
+            patch_debug_paths: List[Path] = []
             conversation: List[Dict[str, str]] = [{'role': 'user', 'content': prompt}]
             _write_conversation_log(conversation)
             accumulated_raw = ""
             accumulated_clean_chunks: List[str] = []
-            continuation_attempts = 0
+            patch_retry_attempts = 0
+
+            knowledges: List[Dict] = []
 
             while True:
                 raw_response = await _call_with_retries(
                     generator=claude_generator,
                     prompt=None,
-                    source_paths=[job['file_path']],
+                    source_paths=source_files,
                     base_dir=folder_path,
                     prefix='stage1',
                     prefer_original_when_single=True,
@@ -655,37 +894,82 @@ async def run_stage1_index_creation():
                 conversation.append({'role': 'assistant', 'content': cleaned_chunk})
                 _write_conversation_log(conversation)
 
+
                 combined_clean = ''.join(accumulated_clean_chunks)
                 candidate = _extract_json_candidate(combined_clean)
+                data, candidate_text = await _ensure_valid_json_patch(
+                    candidate=candidate,
+                    raw_output=combined_clean,
+                    generator=gemini_generator,
+                    job_file_path=job['file_path'],
+                    folder_path=folder_path,
+                )
 
-                if candidate is None:
-                    continuation_attempts += 1
-                    if continuation_attempts > MAX_JSON_PARSE_RETRIES:
-                        raise ValueError("Modelo nao retornou JSON valido apos multiplas tentativas.")
-                    logger.warning("Resposta JSON ausente ou incompleta. Solicitando continuacao ao modelo...")
-                    conversation.append({'role': 'user', 'content': CONTINUATION_PROMPT})
-                    _write_conversation_log(conversation)
-                    continue
-
-                try:
-                    data = json.loads(candidate)
+                if has_existing_index:
+                    operations = _extract_patch_operations(data)
+                    logger.info(f"Operacoes JSON Patch recebidas: {len(operations)}")
+                    attempt_index = patch_retry_attempts + 1
+                    patch_debug_path = Path(INDEXES_PATH) / f'patch_job_{job_id}_attempt_{attempt_index}.json'
+                    patch_debug_paths.append(patch_debug_path)
                     try:
-                        temp_raw_path.unlink()
-                    except FileNotFoundError:
-                        pass
-                    break
-                except json.JSONDecodeError as exc:
-                    if _looks_truncated(candidate, exc):
-                        continuation_attempts += 1
-                        if continuation_attempts > MAX_JSON_PARSE_RETRIES:
+                        patch_debug_path.write_text(candidate_text, encoding='utf-8')
+                        logger.info(f"JSON Patch salvo para depuracao em: {patch_debug_path}")
+                    except Exception as write_exc:
+                        logger.warning(f"Falha ao salvar JSON Patch em {patch_debug_path}: {write_exc}")
+                        patch_debug_paths.pop()
+                        patch_debug_path = None
+                    try:
+                        patched_index = _apply_json_patch(index_data, operations)
+                    except Exception as patch_exc:
+                        if patch_debug_path:
+                            logger.error(f"Erro ao aplicar JSON Patch. Arquivo de depuracao: {patch_debug_path}")
+                        failure_idx, failing_op, inner_exc = _diagnose_patch_failure(index_data, operations)
+                        patch_retry_attempts += 1
+                        if patch_retry_attempts >= MAX_PATCH_RETRIES:
+                            logger.error(
+                                "Falha definitiva ao aplicar JSON Patch apos %d tentativas. "
+                                "Operacao #%d: %s. Erro reportado: %s",
+                                patch_retry_attempts,
+                                failure_idx,
+                                json.dumps(failing_op, ensure_ascii=False) if failing_op else "<desconhecida>",
+                                inner_exc or patch_exc,
+                            )
                             raise
-                        logger.warning("JSON truncado detectado. Solicitando continuacao ao modelo...")
-                        conversation.append({'role': 'user', 'content': CONTINUATION_PROMPT})
+                        detail_lines = [
+                            "Aplicacao do JSON Patch falhou.",
+                            f"- Tentativa: {patch_retry_attempts}/{MAX_PATCH_RETRIES}",
+                        ]
+                        if failing_op:
+                            detail_lines.append(f"- Operacao #{failure_idx}: {json.dumps(failing_op, ensure_ascii=False)}")
+                        detail_lines.append(f"- Erro reportado: {inner_exc or patch_exc}")
+                        detail_lines.append("Corrija os caminhos apontando para indices existentes (use contagem iniciando em 0 ou '-' para anexar) e reenviar TODO o patch completo.")
+                        feedback_message = "\n".join(detail_lines)
+                        conversation.append({'role': 'user', 'content': feedback_message})
                         _write_conversation_log(conversation)
+                        accumulated_raw = ""
+                        accumulated_clean_chunks = []
+                        try:
+                            temp_raw_path.write_text("", encoding='utf-8')
+                        except Exception as cleanup_exc:
+                            logger.warning(f"Falha ao limpar arquivo temporario {temp_raw_path}: {cleanup_exc}")
+                        logger.warning(f"Requisitando nova versao do JSON Patch apos falha (tentativa {patch_retry_attempts + 1}/{MAX_PATCH_RETRIES}).")
                         continue
-                    raise
-            knowledges = _flatten_sections(data, current_file_name, existing_index=index_data)
-            _update_index_with_entries(index_data, knowledges)
+                    index_data = patched_index
+                    if not isinstance(index_data, dict):
+                        raise ValueError("Resultado das operacoes JSON Patch nao e um objeto JSON.")
+                    _update_index_with_entries(index_data, [])
+                    lookup_after = _build_knowledge_lookup(index_data)
+                    lookup_before = _build_knowledge_lookup(index_before) if index_before else {}
+                    new_ids = sorted(kid for kid in lookup_after.keys() if kid not in lookup_before)
+                    if new_ids:
+                        logger.info(f"{len(new_ids)} novos conhecimentos identificados para o job {job_id}.")
+                    knowledges = _build_entries_from_lookup(new_ids, lookup_after, current_file_name)
+                    candidate_text = candidate_text
+                else:
+                    knowledges = _flatten_sections(data, current_file_name, existing_index=index_data)
+                    _update_index_with_entries(index_data, knowledges)
+                break
+
             save_index_data(index_path, index_data)
 
             if knowledges:
@@ -694,10 +978,27 @@ async def run_stage1_index_creation():
 
             update_job_state(job_id, stage_id=2, status_id=3)
             logger.info(f"Job {job_id} concluido com sucesso.")
+            if temp_raw_path.exists():
+                try:
+                    temp_raw_path.unlink()
+                except Exception as cleanup_exc:
+                    logger.warning(f"Falha ao remover arquivo temporario {temp_raw_path}: {cleanup_exc}")
+            for debug_path in patch_debug_paths:
+                if debug_path.exists():
+                    try:
+                        debug_path.unlink()
+                    except Exception as cleanup_exc:
+                        logger.warning(f"Falha ao remover arquivo de depuracao {debug_path}: {cleanup_exc}")
         except Exception as e:
-            logger.error(f"Erro ao processar o job {job_id}: {e}")
-            update_job_state(job_id, stage_id=1, status_id=4)
-            raise SystemExit(1) from e
+            last_debug = patch_debug_paths[-1] if patch_debug_paths else None
+            logger.exception(
+                "Erro ao processar o job %s (arquivo: %s). Ultimo patch salvo: %s",
+                job_id,
+                current_file_name,
+                last_debug or "nenhum",
+            )
+            update_job_state(job_id, stage_id=1, status_id=1)
+            continue
 
 
 def _extract_file_names(row) -> List[str]:

@@ -31,15 +31,15 @@ Extract knowledge pieces that are:
 
 # RULES
 * Write in Portuguese.
-* Respond only with the code JSON templated in <format>.
-* Mantenha os itens identificados como base de conhecimento; evite concentrar muitas ideias em um unico knowledge.
-* Retorne um array "sections"; cada secao deve conter "section_id", "title" e um array "knowledges".
-* Cada knowledge precisa de "id", "category", "name", "description" (texto curto e objetivo), "files" (lista de nomes de arquivos em string) e "knowledge_related" (array de IDs inteiros de conhecimentos relacionados; use [] quando nao houver, maximo de 6 arquivos por conhecimento).
-* Evite inserir aspas duplas dentro dos valores de strings. Se for indispensavel, escape-as usando \\\" ou substitua por apostrofos.
-* Sempre inclua o arquivo atual em "files" quando o conhecimento for identificado neste documento. Use exatamente o nome fornecido e nao duplique nomes.
-* Preserve IDs, arquivos e relacionamentos que ja existirem no indice atual.
-* ignore conhecimentos sobre suporte de curso, como baixar arquivos, service desk, contatos, grupos
-* Não adicione informação sobre especialistas   
-* Nao inclua comentarios; sua saida sera salva em arquivo.
+* Respond only with the JSON code templated in <format>.
+* Keep the items identified as knowledge base; avoid concentrating too many ideas in a single knowledge.
+* Return a "sections" array; each section should contain "section_id", "title", and a "knowledges" array.
+* Each knowledge needs an "id", "category", "name", "description" (short and objective text), "files" (a list of file names in string form), and "knowledge_related" (an array of integer IDs of related knowledge; use [] when none exist, maximum of 6 files per knowledge).
+* DO NOTE use double quotes within string values.
+* Always include the current file in "files" when knowledge is identified in this document. Use the exact name provided and do not duplicate names.
+* Preserve IDs, files, and relationships that already exist in the current index.
+* Ignore knowledge about course support, such as downloading files, service desk, contacts, and groups.
+* Do not add information about experts.
+* Do not include comments; your output will be saved to a file.
 
-Os arquivos de referencia estao anexados a esta conversa.
+Reference files are attached to this conversation.
