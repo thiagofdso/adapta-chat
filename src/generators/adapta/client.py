@@ -769,7 +769,7 @@ class AdaptaClient:
                 if not chat_id:
                     logger.debug("Iniciando exclusão da conversa temporária...")
                     try:
-                        await self._delete_conversations([current_chat_id])
+                        #await self._delete_conversations([current_chat_id])
                         logger.debug("Conversa temporária excluída com sucesso")
                     except Exception as delete_error:
                         logger.warning(f"Erro ao excluir conversa temporária {current_chat_id} (não crítico): {delete_error}")

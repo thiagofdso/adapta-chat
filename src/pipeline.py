@@ -32,22 +32,18 @@ KNOWLEDGE_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'know
 MAX_WORDS_PER_UPLOAD = 400000
 MAX_RETRIES = 3
 INITIAL_RETRY_DELAY = 2.0
-MAX_JSON_PARSE_RETRIES = 3
+MAX_JSON_PARSE_RETRIES = 10
 JSON_PARSE_RETRY_DELAY = 1.0
 
 os.makedirs(INDEXES_PATH, exist_ok=True)
 
-MAX_JSON_PARSE_RETRIES = 3
-JSON_PARSE_RETRY_DELAY = 1.0
 
 os.makedirs(INDEXES_PATH, exist_ok=True)
-
-INITIAL_RETRY_DELAY = 2.0
 
 os.makedirs(INDEXES_PATH, exist_ok=True)
 
 CHAT_LOG_PATH = Path(INDEXES_PATH) / 'chat.md'
-MAX_PATCH_RETRIES = 3
+MAX_PATCH_RETRIES = 6
 VALIDATOR_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'knowledge_extraction_continuation_validator.txt')
 
 def slugify(text: str) -> str:
@@ -227,6 +223,41 @@ def _create_consolidated_temp_file(file_paths: List[str], base_dir: Optional[str
     return temp_path
 
 
+
+
+def _prepare_upload_specs(
+    file_paths: List[str],
+    base_dir: Optional[str],
+    prefix: str,
+    prefer_original: bool,
+    consolidate: bool,
+) -> List[Tuple[Path, bool]]:
+    if not file_paths:
+        raise ValueError("Nenhum arquivo fonte informado para upload.")
+
+    if consolidate or len(file_paths) == 1:
+        upload_path, cleanup = _prepare_upload_file(
+            file_paths=file_paths,
+            base_dir=base_dir,
+            prefix=prefix,
+            prefer_original=prefer_original,
+        )
+        return [(upload_path, cleanup)]
+
+    specs: List[Tuple[Path, bool]] = []
+    for source in file_paths:
+        source_path = Path(source)
+        if source_path.suffix.lower() == '.txt':
+            specs.append((source_path, False))
+            continue
+
+        consolidated_text = _build_consolidated_text([str(source_path)], base_dir)
+        temp_dir = Path(tempfile.gettempdir())
+        temp_path = temp_dir / f"{prefix}_{source_path.stem}_{uuid.uuid4().hex}.txt"
+        temp_path.write_text(consolidated_text, encoding='utf-8')
+        specs.append((temp_path, True))
+    return specs
+
 def _prepare_upload_file(
     file_paths: List[str],
     base_dir: Optional[str],
@@ -241,6 +272,34 @@ def _prepare_upload_file(
 
     temp_path = _create_consolidated_temp_file(file_paths, base_dir, prefix)
     return temp_path, True
+
+
+
+
+    if consolidate or len(file_paths) == 1:
+        upload_path, cleanup = _prepare_upload_file(
+            file_paths=file_paths,
+            base_dir=base_dir,
+            prefix=prefix,
+            prefer_original=prefer_original,
+        )
+        return [(upload_path, cleanup)]
+
+    uploads: List[Tuple[Path, bool]] = []
+    for source in file_paths:
+        source_path = Path(source)
+        if source_path.suffix.lower() != '.txt':
+            temp_dir = Path(tempfile.gettempdir())
+            temp_path = temp_dir / f"{prefix}_{uuid.uuid4().hex}.txt"
+            try:
+                temp_content = source_path.read_text(encoding='utf-8')
+            except UnicodeDecodeError:
+                temp_content = source_path.read_bytes().decode('utf-8', errors='ignore')
+            temp_path.write_text(temp_content, encoding='utf-8')
+            uploads.append((temp_path, True))
+        else:
+            uploads.append((source_path, False))
+    return uploads
 
 
 async def _call_generator_with_uploads(
@@ -294,6 +353,7 @@ async def _call_with_retries(
     base_dir: Optional[str],
     prefix: str,
     prefer_original_when_single: bool,
+    consolidate: bool = True,
     max_retries: int = MAX_RETRIES,
     initial_delay: float = INITIAL_RETRY_DELAY,
     fallback_generator: Optional[Any] = None,
@@ -310,8 +370,7 @@ async def _call_with_retries(
     last_error: Optional[Exception] = None
 
     for attempt in range(1, max_retries + 1):
-        upload_path: Optional[Path] = None
-        cleanup = False
+        uploads: Optional[List[Tuple[Path, bool]]] = None
         current_generator = generator
         if (
             fallback_generator is not None
@@ -322,27 +381,29 @@ async def _call_with_retries(
             if attempt == fallback_attempt:
                 logger.info("Usando gerador Gemini como fallback na tentativa final.")
         try:
-            upload_path, cleanup = _prepare_upload_file(
+            uploads = _prepare_upload_specs(
                 file_paths=source_paths,
                 base_dir=base_dir,
                 prefix=prefix,
                 prefer_original=prefer_original_when_single,
+                consolidate=consolidate,
             )
-            return await _call_generator_with_upload(
+            return await _call_generator_with_uploads(
                 current_generator,
                 prompt,
-                upload_path,
-                cleanup,
+                uploads,
                 messages=messages,
                 tool=tool,
             )
         except Exception as exc:
             last_error = exc
-            if cleanup and upload_path and upload_path.exists():
-                try:
-                    upload_path.unlink()
-                except Exception:
-                    pass
+            if uploads:
+                for path, cleanup in uploads:
+                    if cleanup and path.exists():
+                        try:
+                            path.unlink()
+                        except Exception:
+                            pass
             if attempt == max_retries:
                 raise
             logger.warning(f"Tentativa {attempt}/{max_retries} falhou ({exc}). Nova tentativa em {delay:.1f}s...")
@@ -531,9 +592,9 @@ async def _ensure_valid_json_patch(candidate: Optional[str], raw_output: str, ge
         attempts += 1
         if attempts > MAX_JSON_PARSE_RETRIES:
             raise ValueError('Nao foi possivel obter JSON valido apos validacao.')
-        validator_response = await _run_patch_validator(generator, job_file_path, folder_path, validator_input)
-        validator_response = validator_response.strip()
-        current_candidate = _extract_json_candidate(validator_response) or validator_response
+        #validator_response = await _run_patch_validator(generator, job_file_path, folder_path, validator_input)
+        #validator_response = validator_response.strip()
+        current_candidate = _extract_json_candidate(validator_input) or validator_input
 
 
 def _split_json_pointer(path: str) -> List[str]:
@@ -874,12 +935,13 @@ async def run_stage1_index_creation():
 
             while True:
                 raw_response = await _call_with_retries(
-                    generator=claude_generator,
+                    generator=gemini_generator,
                     prompt=None,
                     source_paths=source_files,
                     base_dir=folder_path,
                     prefix='stage1',
                     prefer_original_when_single=True,
+                    consolidate=False,
                     fallback_generator=gemini_generator,
                     fallback_attempt=3,
                     messages=conversation,

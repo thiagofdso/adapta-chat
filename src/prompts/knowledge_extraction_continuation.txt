@@ -112,7 +112,7 @@ RFC-aligned patch examples:
 5. Update the JSON with the knowledge that will be updated.
 6. Review the section and knowledge indexes.
 7. Review the related knowledge IDs.
-8. Review the JSON formatting.
+8. Review the JSON formatting and remove double quotes inside values of json.
 9. Respond with the final JSON.
 
 DO NOT respond until you have the final JSON.
