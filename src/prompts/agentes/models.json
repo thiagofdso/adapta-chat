@@ -1,6 +1,5 @@
 {
     "Agent 1": "Deepseek",
     "Agent 2": "GPT",
-    "Agent 3": "Claude",
-    "Agent 4": "Claude Opus"
+    "Agent 3": "Claude"
 }

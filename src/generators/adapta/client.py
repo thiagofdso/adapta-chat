@@ -5,9 +5,12 @@ fornecendo autenticação, gerenciamento de sessão e métodos para chamadas de 
 """
 
 import asyncio
+import time
 import uuid
-from typing import Dict, List, Optional, Any
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Deque, Dict, List, Optional
 
 import httpx
 
@@ -41,13 +44,15 @@ class AdaptaClient:
     """
     
     def __init__(
-        self, 
-        cookies_str: Optional[str] = None, 
+        self,
+        cookies_str: Optional[str] = None,
         user_id: Optional[str] = None,
         timeout: Optional[float] = None,
         connect_timeout: Optional[float] = None,
         read_timeout: Optional[float] = None,
-        session_id: Optional[str] = None, 
+        session_id: Optional[str] = None,
+        rate_limit_max_requests: int = 1,
+        rate_limit_interval: float = 30.0,
     ):
         """Inicializa o cliente Adapta.
         
@@ -57,6 +62,8 @@ class AdaptaClient:
             timeout: Timeout geral em segundos (None = sem timeout).
             connect_timeout: Timeout de conexão em segundos (None = sem timeout).
             read_timeout: Timeout de leitura em segundos (None = sem timeout).
+            rate_limit_max_requests: Quantidade maxima de atualizacoes de sessao permitidas no intervalo configurado.
+            rate_limit_interval: Intervalo em segundos utilizado no controle de rate limit das atualizacoes de sessao.
         """
         self.cookies_str = cookies_str
         self.user_id = user_id or "user_2yPVNPe0Wc1yTd83pzslODn0it2"
@@ -82,7 +89,18 @@ class AdaptaClient:
 
         # Headers padrão
         self.headers = self._default_headers()
-    
+
+        if rate_limit_max_requests < 1:
+            raise ValueError("rate_limit_max_requests deve ser maior ou igual a 1")
+        if rate_limit_interval <= 0:
+            raise ValueError("rate_limit_interval deve ser maior que 0")
+
+        self._rate_limit_max_requests = rate_limit_max_requests
+        self._rate_limit_interval = rate_limit_interval
+        self._session_update_events: Deque[float] = deque()
+        self.last_session_update_at: Optional[datetime] = None
+        self._update_session_lock: Optional[asyncio.Lock] = None
+
     def _default_headers(self) -> Dict[str, str]:
         """Retorna os headers padrão para as requisições.
         
@@ -96,14 +114,20 @@ class AdaptaClient:
             "priority": "u=1, i",
             "origin": "https://app.adapta.one",
             "referer": "https://app.adapta.one/",
-            "sec-ch-ua": '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
+            "sec-ch-ua": 'Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
             "sec-fetch-dest": "empty",
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-site"
         }
+    
+    def _get_update_session_lock(self) -> asyncio.Lock:
+        """Retorna (criando sob demanda) o lock usado na atualizacao de sessao."""
+        if self._update_session_lock is None:
+            self._update_session_lock = asyncio.Lock()
+        return self._update_session_lock
     
     def _parse_cookies(self, cookies_str: str) -> Dict[str, str]:
         """Converte uma string de cookies em um dicionário.
@@ -180,7 +204,7 @@ class AdaptaClient:
 
             logger.debug(f"Cookies disponíveis: {list(self.cookies.keys())}")
 
-            client_url = f"{self.clerk_base_url}/client?__clerk_api_version=2024-10-01&_clerk_js_version=5.55.1"
+            client_url = f"{self.clerk_base_url}/client?__clerk_api_version=2025-04-10&_clerk_js_version=5.101.1"
             logger.debug(f"Fazendo requisição para: {client_url}")
 
             response = await self.client.get(
@@ -236,50 +260,65 @@ class AdaptaClient:
             raise
 
     async def _update_session(self) -> None:
-        """Atualiza o cookie __session com o token JWT atualizado."""
+        """Atualiza o cookie __session com o token JWT atualizado respeitando o rate limit."""
         if not self.client or not self.session_id:
             logger.error("Cliente ou session_id não inicializado")
             raise RuntimeError("Cliente ou session_id não inicializado")
 
-        try:
-            touch_url = (
-                f"{self.clerk_base_url}/client/sessions/{self.session_id}/touch?"
-                "__clerk_api_version=2025-04-10&_clerk_js_version=5.97.0"
-            )
-            touch_headers = self.headers.copy()
-            touch_headers["content-type"] = "application/x-www-form-urlencoded"
+        lock = self._get_update_session_lock()
+        async with lock:
+            current_monotonic = time.monotonic()
+            while (
+                self._session_update_events
+                and current_monotonic - self._session_update_events[0] >= self._rate_limit_interval
+            ):
+                self._session_update_events.popleft()
 
-            #logger.debug(f"HEADERS: {touch_headers}")
-            #logger.debugf"Cookies: {self.cookies}")
+            if len(self._session_update_events) >= self._rate_limit_max_requests:
+                logger.debug(
+                    "Rate limit de atualização de sessão atingido para o usuário %s; mantendo cookies atuais.",
+                    self.user_id,
+                )
+                return
 
-            response = await self.client.post(
-                touch_url,
-                headers=touch_headers,
-                cookies=self.cookies,
-                content="active_organization_id=",
-            )
-            response.raise_for_status()
+            try:
+                touch_url = (
+                    f"{self.clerk_base_url}/client/sessions/{self.session_id}/touch?"
+                    "__clerk_api_version=2025-04-10&_clerk_js_version=5.101.1"
+                )
+                touch_headers = self.headers.copy()
+                touch_headers["content-type"] = "application/x-www-form-urlencoded"
 
-            session_data = response.json()
-            session_jwt = session_data["client"]["sessions"][0]["last_active_token"]["jwt"]
+                response = await self.client.post(
+                    touch_url,
+                    headers=touch_headers,
+                    cookies=self.cookies,
+                    content="active_organization_id=",
+                )
+                response.raise_for_status()
 
-            if not session_jwt:
-                raise ValueError("Token JWT obtido esta vazio")
+                session_data = response.json()
+                session_jwt = session_data["client"]["sessions"][0]["last_active_token"]["jwt"]
 
-            self.cookies["__session"] = session_jwt
-            self.cookies["__session_xcsZUTdN"] = session_jwt
+                if not session_jwt:
+                    raise ValueError("Token JWT obtido está vazio")
 
-            logger.debug(f"Sessão atualizada com sucesso. Token: {session_jwt[:20]}...")
+                self.cookies["__session"] = session_jwt
+                self.cookies["__session_xcsZUTdN"] = session_jwt
+                self._session_update_events.append(current_monotonic)
+                self.last_session_update_at = datetime.now(timezone.utc)
 
-        except httpx.HTTPError as e:
-            logger.error(f"Erro ao atualizar sessão: {e}")
-            raise
-        except KeyError as e:
-            logger.error(f"Erro ao extrair token da resposta: {e}")
-            raise
-        except ValueError as e:
-            logger.error(f"Token inválido: {e}")
-            raise
+                logger.debug("Sessão atualizada com sucesso. Token: %s...", session_jwt[:20])
+
+            except httpx.HTTPError as e:
+                logger.error(f"Erro ao atualizar sessão: {e}")
+                raise
+            except KeyError as e:
+                logger.error(f"Erro ao extrair token da resposta: {e}")
+                raise
+            except ValueError as e:
+                logger.error(f"Token inválido: {e}")
+                raise
 
 
     def _generate_random_id(self) -> str:
@@ -769,7 +808,7 @@ class AdaptaClient:
                 if not chat_id:
                     logger.debug("Iniciando exclusão da conversa temporária...")
                     try:
-                        #await self._delete_conversations([current_chat_id])
+                        await self._delete_conversations([current_chat_id])
                         logger.debug("Conversa temporária excluída com sucesso")
                     except Exception as delete_error:
                         logger.warning(f"Erro ao excluir conversa temporária {current_chat_id} (não crítico): {delete_error}")
@@ -937,14 +976,26 @@ class AdaptaClient:
             Resposta da API ou None se todas as tentativas falharem.
         """
         last_error = None
+
+        # Alterna entre os modelos Claude e Gemini nas retentativas quando um deles for solicitado
+        alternate_cycle = None
+        if model in {"CLAUDE_4", "GEMINI"}:
+            other_model = "GEMINI" if model == "CLAUDE_4" else "CLAUDE_4"
+            alternate_cycle = [model, other_model]
         
         for attempt in range(max_retries):
+            current_model = model
+            if alternate_cycle:
+                current_model = alternate_cycle[attempt % len(alternate_cycle)]
+
             try:
-                logger.debug(f"Tentativa {attempt + 1}/{max_retries} para criar conversa")
+                logger.debug(
+                    f"Tentativa {attempt + 1}/{max_retries} para criar conversa usando modelo {current_model}"
+                )
                 
                 response = await self._create_conversation(
                     messages,
-                    model,
+                    current_model,
                     searchType=searchType,
                     tool=tool,
                     chat_id=chat_id,

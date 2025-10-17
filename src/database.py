@@ -132,7 +132,7 @@ def find_knowledges_by_folder(folder_path):
         LEFT JOIN knowledge_relations r ON r.knowledge_id = k.id
         WHERE j.folder_path = ?
         GROUP BY k.id
-        ORDER BY k.section_id, k.knowledge_id_from_json
+        ORDER BY k.knowledge_id_from_json
     ''', (folder_path,))
 
     knowledges = cursor.fetchall()
@@ -207,22 +207,35 @@ def add_knowledges_from_json(job_id, knowledges_list):
     cursor = conn.cursor()
 
     for knowledge in knowledges_list:
+        index_position = knowledge.get('index')
+        try:
+            knowledge_order = int(index_position) + 1
+        except (TypeError, ValueError):
+            knowledge_order = 0
+
         cursor.execute(
             "INSERT INTO knowledges (job_id, knowledge_id_from_json, category, name, description, section_id, section_title, status_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 job_id,
-                knowledge.get('id'),
-                knowledge.get('category'),
-                knowledge.get('name'),
-                knowledge.get('description'),
-                knowledge.get('section_id'),
-                knowledge.get('section_title'),
+                knowledge_order,
+                knowledge.get('category') or 'Geral',
+                knowledge.get('name') or '',
+                knowledge.get('description') or '',
+                None,
+                None,
                 1
             )
         )
         knowledge_db_id = cursor.lastrowid
-        _insert_files_for_knowledge(cursor, knowledge_db_id, [f.get('name') if isinstance(f, dict) else f for f in knowledge.get('files', [])])
-        _insert_related_for_knowledge(cursor, knowledge_db_id, knowledge.get('knowledge_related', []))
+        file_list = []
+        for value in knowledge.get('files') or []:
+            clean = str(value).strip()
+            if clean and clean not in file_list:
+                file_list.append(clean)
+            if len(file_list) >= 5:
+                break
+        _insert_files_for_knowledge(cursor, knowledge_db_id, file_list)
+        _insert_related_for_knowledge(cursor, knowledge_db_id, [])
 
     conn.commit()
     conn.close()
