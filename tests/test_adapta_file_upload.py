@@ -144,3 +144,56 @@ class TestUploadAndFileUsage(IsolatedAsyncioTestCase):
             AdaptaClient._prepare_files_payload(objetos),
             [{"id": "f3", "name": "Arquivo 3"}, {"fileId": "f4", "id": "f4"}],
         )
+
+
+class TestRetryAlternatingModels(IsolatedAsyncioTestCase):
+    """Garante que os modelos Claude e Gemini sao alternados nas retentativas."""
+
+    async def asyncSetUp(self) -> None:
+        self.client = AdaptaClient(
+            cookies_str="__session=fake_token; alt=value",
+            session_id="sess_fake_retry",
+        )
+        self.client._ensure_client = AsyncMock()
+        self.client._update_session = AsyncMock()
+
+    async def test_retry_cycle_inicia_com_gemini(self) -> None:
+        mensagens = [{"role": "user", "content": "Teste de retry"}]
+        resposta_final = MagicMock(status_code=200, text='0:"ok"')
+        self.client._create_conversation = AsyncMock(
+            side_effect=[Exception("Falha 1"), Exception("Falha 2"), resposta_final]
+        )
+
+        resultado = await self.client._create_conversation_with_retry(
+            mensagens,
+            "GEMINI",
+            max_retries=3,
+            delay=0.0,
+        )
+
+        self.assertIs(resultado, resposta_final)
+        chamadas = self.client._create_conversation.await_args_list
+        self.assertEqual(len(chamadas), 3)
+        self.assertEqual(chamadas[0].args[1], "GEMINI")
+        self.assertEqual(chamadas[1].args[1], "CLAUDE_4")
+        self.assertEqual(chamadas[2].args[1], "GEMINI")
+
+    async def test_retry_cycle_inicia_com_claude(self) -> None:
+        mensagens = [{"role": "user", "content": "Teste com Claude"}]
+        resposta_final = MagicMock(status_code=200, text='0:"ok"')
+        self.client._create_conversation = AsyncMock(
+            side_effect=[Exception("Falha inicial"), resposta_final]
+        )
+
+        resultado = await self.client._create_conversation_with_retry(
+            mensagens,
+            "CLAUDE_4",
+            max_retries=3,
+            delay=0.0,
+        )
+
+        self.assertIs(resultado, resposta_final)
+        chamadas = self.client._create_conversation.await_args_list
+        self.assertEqual(len(chamadas), 2)
+        self.assertEqual(chamadas[0].args[1], "CLAUDE_4")
+        self.assertEqual(chamadas[1].args[1], "GEMINI")
