@@ -186,13 +186,19 @@ Retorne JSON no formato especificado.
 - O tamanho do lote deve ser configuravel via `MAX_BATCH_SIZE_PHASE1` e `MAX_BATCH_SIZE_PHASE2` no modulo de configuracao.
 - Salvar qualquer artefato gerado em pastas versionadas por data (`02_processed/2025-10-18/`) para facilitar auditoria, registrando o caminho em `batch_files`.
 
+## Estagios implementados no codigo
+- `run_stage4_batch_preparation`: agrupa jobs concluidos e organiza `01_staging/lotes/<id>/input` com `lote_config.json` da fase 1.
+- `run_stage5_batch_execution`: envia os lotes da fase 1 para o LLM, gera `lote_XX_consolidado.json` e replica para `fase_01_resultados`.
+- `run_stage6_phase2_preparation`: converte outputs da fase 1 em lotes da fase 2, registrando pais consumidos e entradas em `entries`.
+- `run_stage7_phase2_execution`: executa os lotes da fase 2, grava `fase2_lote_XX_consolidado.json` e atualiza métricas/estado no banco.
+- `run_stage8_finalize_index`: consolida os resultados finais (copiando diretamente quando há um único arquivo ou acionando o LLM quando múltiplos) e atualiza `02_processed/indice_final.json`.
+
 ## Roadmap de implementacao
-1. **Migracao de banco**: criar script incremental (`poetry run python scripts/migrate_batches.py`) que adicione as novas tabelas e indices sem afetar dados existentes.
-2. **Servicos de acesso**: implementar funcoes em `src/database.py` (`create_batch`, `append_batch_item`, `update_batch_status`, `list_pending_batches`) mantendo coesao com o estilo atual.
-3. **Adaptacao do pipeline**: adicionar novo estagio (ex.: `run_stage4_batch_merge`) que consome as tabelas de lote e executa as fases 1/2/3 conforme descrito.
-4. **Persistencia de artefatos**: padronizar funcoes utilitarias para salvar outputs de lote e registrar automaticamente em `batch_files`.
-5. **Relatorios e monitoramento**: criar script/CLI para inspecionar batches e integrar com logs existentes.
-6. **Documentacao**: atualizar `docs/architecture.md` e `docs/requirements.md` com o fluxo de lote e diagramas; manter este arquivo como referencia operacional.
+1. **Inicializacao do banco**: disponibilizar script (`poetry run python scripts/setup_batches.py`) que cria o banco do zero e aplica o schema completo de lotes.
+2. **Relatorios e monitoramento**: implementar CLI (`scripts/report_batches.py`) que liste status, tempos e falhas dos lotes (fases 1, 2 e final).
+3. **Reprocessamento**: criar utilitario para reabrir lotes com `status_id = 4` (fase 1, 2 ou final), limpando `consumed_at` e clonando itens.
+4. **Testes automatizados**: adicionar suites focadas em `set_batch_consumed`, preparacao de lotes e consolidacao final para evitar regressao.
+5. **Documentacao**: atualizar `docs/architecture.md` e `docs/requirements.md` detalhando o pipeline em fases e o papel de cada tabela auxiliar.
 
 ## Decisoes confirmadas
 - Os lotes sao montados a partir dos JSONs individuais gerados pelos jobs; conhecimentos consolidados entram apenas nas fases seguintes.
