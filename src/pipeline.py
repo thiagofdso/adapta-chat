@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -14,12 +16,22 @@ from database import (
     add_knowledges_from_json,
     are_all_knowledges_completed_for_job,
     create_job,
+    create_batch_run,
+    append_batch_item,
+    get_unbatched_jobs,
+    get_batch_items,
     get_completed_jobs_by_stage,
+    get_pending_batch_runs,
     get_pending_jobs_by_stage,
     get_pending_knowledges,
     initialize_database,
+    record_batch_file,
+    record_batch_metrics,
+    update_batch_item_output,
     update_job_state,
+    update_batch_status,
     update_knowledge_status,
+    set_batch_consumed,
 )
 from generators.adapta.claude_opus_generator import ClaudeOpusGenerator
 from generators.adapta.gemini_generator import GeminiGenerator
@@ -36,6 +48,34 @@ MAX_RETRIES = 10
 INITIAL_RETRY_DELAY = 2.0
 MAX_INDEX_CHUNK_SIZE = 300
 UPLOAD_DELAY_SECONDS = 2.0
+STAGING_BASE_DIR = '01_staging'
+STAGING_BATCHES_DIR = os.path.join(STAGING_BASE_DIR, 'lotes')
+STAGING_PHASE1_RESULTS_DIR = os.path.join(STAGING_BASE_DIR, 'fase_01_resultados')
+STAGING_PHASE2_RESULTS_DIR = os.path.join(STAGING_BASE_DIR, 'fase_02_resultados')
+PROMPT_LOG_FILE = os.path.join(STAGING_BASE_DIR, 'prompt_lote.txt')
+DEFAULT_BATCH_SIZE_PHASE1 = 10
+DEFAULT_BATCH_SIZE_PHASE2 = 5
+BATCH_DEDUP_PROMPT = (
+    "Voce e um especialista em organizacao de conhecimento. Analise os conhecimentos extraidos das transcricoes anexadas.\n\n"
+    "TAREFA:\n"
+    "1. Identifique conhecimentos que tratam do MESMO conceito/tecnica/ideia (nao apenas texto identico)\n"
+    "2. Para cada grupo de conhecimentos similares:\n"
+    "   - Crie UMA entrada consolidada\n"
+    "   - Use o nome mais claro e descritivo\n"
+    "   - Combine as descricoes preservando todas as nuances importantes\n"
+    "   - Liste TODOS os arquivos fonte\n\n"
+    "CRITERIOS DE SIMILARIDADE:\n"
+    "- Mesmo conceito tecnico com nomenclaturas diferentes\n"
+    "- Descricoes complementares do mesmo assunto\n"
+    "- Exemplos diferentes da mesma tecnica\n\n"
+    "IMPORTANTE:\n"
+    "- Mantenha conhecimentos DISTINTOS separados mesmo que relacionados\n"
+    "- Nao perca informacao relevante na consolidacao\n"
+    "- Quando em duvida, mantenha separado\n\n"
+    "Retorne JSON no formato especificado."
+)
+PROCESSED_DIR = '02_processed'
+FINAL_INDEX_PATH = os.path.join(PROCESSED_DIR, 'indice_final.json')
 
 os.makedirs(INDEXES_PATH, exist_ok=True)
 
@@ -46,6 +86,116 @@ os.makedirs(INDEXES_PATH, exist_ok=True)
 
 CHAT_LOG_PATH = Path(INDEXES_PATH) / 'chat.md'
 MAX_PATCH_RETRIES = 6
+
+
+def _ensure_staging_directories() -> None:
+    for path in [
+        STAGING_BASE_DIR,
+        STAGING_BATCHES_DIR,
+        STAGING_PHASE1_RESULTS_DIR,
+        STAGING_PHASE2_RESULTS_DIR,
+    ]:
+        os.makedirs(path, exist_ok=True)
+
+
+def _chunk_sequence(sequence, chunk_size):
+    chunk = []
+    for item in sequence:
+        chunk.append(item)
+        if len(chunk) >= chunk_size:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
+
+
+def _build_lote_directory(batch_id: int) -> Path:
+    padded = f"lote_{batch_id:05d}"
+    lote_dir = Path(STAGING_BATCHES_DIR) / padded
+    (lote_dir / 'input').mkdir(parents=True, exist_ok=True)
+    (lote_dir / 'output').mkdir(parents=True, exist_ok=True)
+    return lote_dir
+
+
+def _write_batch_prompt(prompt_text: str) -> str:
+    Path(STAGING_BASE_DIR).mkdir(parents=True, exist_ok=True)
+    Path(PROMPT_LOG_FILE).write_text(prompt_text, encoding='utf-8')
+    return PROMPT_LOG_FILE
+
+
+def _prepare_batch_input_file(job_row, destination_dir: Path, order_index: int) -> Optional[str]:
+    source_path = job_row['file_path']
+    if not source_path or not os.path.isfile(source_path):
+        logger.warning(f"Arquivo de entrada do job {job_row['id']} nao encontrado: {source_path}")
+        return None
+
+    base_name = os.path.basename(source_path)
+    destination_name = f"{order_index:03d}_{base_name}"
+    destination_path = destination_dir / destination_name
+
+    try:
+        shutil.copy2(source_path, destination_path)
+    except Exception as exc:
+        logger.error(f"Falha ao copiar {source_path} para {destination_path}: {exc}")
+        return None
+
+    return str(destination_path)
+
+
+def _write_lote_config(config_path: Path, payload: Dict) -> None:
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with config_path.open('w', encoding='utf-8') as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def _load_lote_config(batch_id: int) -> Dict[str, Any]:
+    lote_dir = Path(STAGING_BATCHES_DIR) / f"lote_{batch_id:05d}"
+    config_path = lote_dir / 'lote_config.json'
+    try:
+        return json.loads(config_path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        logger.warning(f"Config JSON invalido para o lote {batch_id}.")
+        return {}
+
+
+def _resolve_batch_output_file(batch_id: int) -> Optional[Path]:
+    config = _load_lote_config(batch_id)
+    candidate = config.get('output_file')
+    if candidate and os.path.isfile(candidate):
+        return Path(candidate)
+
+    lote_dir = Path(STAGING_BATCHES_DIR) / f"lote_{batch_id:05d}"
+    output_dir = lote_dir / 'output'
+    default_name = output_dir / f"lote_{batch_id:05d}_consolidado.json"
+    if default_name.exists():
+        return default_name
+    try:
+        first_json = next(output_dir.glob('*.json'))
+        return first_json
+    except StopIteration:
+        fallback = Path(STAGING_PHASE1_RESULTS_DIR) / f"lote_{batch_id:05d}_consolidado.json"
+        if fallback.exists():
+            return fallback
+    return None
+
+
+def _prepare_existing_output_file(source_path: Path, destination_dir: Path, order_index: int) -> Optional[str]:
+    if not source_path.exists():
+        return None
+
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination_name = f"{order_index:03d}_{source_path.name}"
+    destination_path = destination_dir / destination_name
+    try:
+        shutil.copy2(source_path, destination_path)
+    except Exception as exc:
+        logger.error(f"Falha ao copiar {source_path} para {destination_path}: {exc}")
+        return None
+    return str(destination_path)
+
+
 def slugify(text: str) -> str:
     text = text.lower()
     text = re.sub(r"[\s_]+", '-', text)
@@ -1007,14 +1157,14 @@ async def run_stage1_index_creation():
             )
             while True:
                 raw_response = await _call_with_retries(
-                    generator=claude_generator,
+                    generator=gemini_generator,
                     prompt=None,
                     source_paths=source_files,
                     base_dir=folder_path,
                     prefix='stage1',
                     prefer_original_when_single=True,
                     consolidate=False,
-                    generator_cycle=[claude_generator, gpt_generator, gemini_generator],
+                    generator_cycle=[gemini_generator, claude_generator, gpt_generator],
                     messages=conversation,
                     tool="",
                     prepared_uploads=prepared_uploads,
@@ -1279,6 +1429,247 @@ async def run_stage3_cleanup():
             logger.info(f"Job {job_id} finalizado com sucesso.")
 
 
+async def run_stage4_batch_preparation(max_batch_size_phase1: int = DEFAULT_BATCH_SIZE_PHASE1):
+    logger.info('Iniciando Estagio 4: Preparacao de Lotes para Merge.')
+    _ensure_staging_directories()
+
+    prompt_path = _write_batch_prompt(BATCH_DEDUP_PROMPT)
+    fetch_limit = max(max_batch_size_phase1 * 10, max_batch_size_phase1)
+    pending_jobs = get_unbatched_jobs(limit=fetch_limit)
+
+    if not pending_jobs:
+        logger.info('Nenhum job elegivel para novos lotes.')
+        return
+
+    for chunk in _chunk_sequence(pending_jobs, max_batch_size_phase1):
+        batch_id = create_batch_run(
+            stage='phase1',
+            max_batch_size=max_batch_size_phase1,
+            token_estimate=0,
+            parent_batch_id=None,
+        )
+        lote_dir = _build_lote_directory(batch_id)
+        input_dir = lote_dir / 'input'
+        config_entries: List[Dict[str, Any]] = []
+
+        for order, job_row in enumerate(chunk):
+            prepared_path = _prepare_batch_input_file(job_row, input_dir, order)
+            if not prepared_path:
+                continue
+            item_id = append_batch_item(
+                batch_id=batch_id,
+                job_id=job_row['id'],
+                knowledge_id=None,
+                input_path=prepared_path,
+                input_order=order,
+            )
+            config_entries.append({
+                'batch_item_id': item_id,
+                'job_id': job_row['id'],
+                'original_path': job_row['file_path'],
+                'input_path': prepared_path,
+                'input_order': order,
+                'file_name': os.path.basename(prepared_path),
+            })
+
+        if not config_entries:
+            logger.warning(f"Nenhum arquivo valido encontrado para o lote {batch_id}. Marcando como descartado.")
+            update_batch_status(
+                batch_id,
+                status_id=5,
+                input_count=0,
+                error_message='Nenhum arquivo valido para o lote',
+                prompt_path=prompt_path,
+            )
+            continue
+
+        lote_config_path = lote_dir / 'lote_config.json'
+        config_payload = {
+            'batch_id': batch_id,
+            'stage': 'phase1',
+            'max_batch_size': max_batch_size_phase1,
+            'prompt_file': prompt_path,
+            'parent_batches': [],
+            'jobs': config_entries,
+        }
+        _write_lote_config(lote_config_path, config_payload)
+        try:
+            file_size = lote_config_path.stat().st_size
+        except OSError:
+            file_size = 0
+
+        record_batch_file(batch_id, str(lote_config_path), file_size_bytes=file_size)
+        update_batch_status(
+            batch_id,
+            status_id=1,
+            input_count=len(config_entries),
+            prompt_path=prompt_path,
+        )
+        logger.info(f"Lote {batch_id} preparado com {len(config_entries)} entradas.")
+
+
+async def run_stage5_batch_execution():
+    logger.info('Iniciando Estagio 5: Execucao de Lotes (Fase 1).')
+    _ensure_staging_directories()
+
+    pending_batches = get_pending_batch_runs(stage='phase1', status_filter=(1,))
+    if not pending_batches:
+        logger.info('Nenhum lote pendente para execucao.')
+        return
+
+    gemini_generator = GeminiGenerator()
+    claude_generator = ClaudeOpusGenerator()
+    gpt_generator = GPTGenerator()
+
+    for batch in pending_batches:
+        batch_id = batch['id']
+        logger.info(f"Processando lote {batch_id} (fase 1).")
+        lote_dir = _build_lote_directory(batch_id)
+        input_dir = lote_dir / 'input'
+        output_dir = lote_dir / 'output'
+        lote_config_path = lote_dir / 'lote_config.json'
+
+        items = get_batch_items(batch_id)
+        if not items:
+            logger.warning(f"Lote {batch_id} nao possui itens registrados. Marcando como descartado.")
+            update_batch_status(
+                batch_id,
+                status_id=5,
+                error_message='Lote sem itens para processamento.',
+                finished_at=datetime.utcnow().isoformat(),
+            )
+            continue
+
+        valid_items = []
+        input_paths: List[str] = []
+        for item in items:
+            input_path = item['input_path']
+            if input_path and os.path.isfile(input_path):
+                valid_items.append(item)
+                input_paths.append(input_path)
+            else:
+                update_batch_item_output(
+                    item['id'],
+                    status_id=5,
+                    notes='Arquivo de entrada ausente para o lote.',
+                )
+
+        if not input_paths:
+            logger.error(f"Lote {batch_id} sem arquivos validos para upload. Marcando como falha.")
+            update_batch_status(
+                batch_id,
+                status_id=4,
+                error_message='Nenhum arquivo valido encontrado para o lote.',
+                finished_at=datetime.utcnow().isoformat(),
+            )
+            continue
+
+        for item in valid_items:
+            update_batch_item_output(item['id'], status_id=2)
+
+        upload_display_names = _predict_upload_names(
+            input_paths,
+            base_dir=str(lote_dir),
+            prefix='batch',
+            prefer_original=True,
+            consolidate=False,
+        )
+        files_prompt = _build_files_prompt_segment(input_paths, str(lote_dir), upload_display_names)
+        prompt = BATCH_DEDUP_PROMPT + files_prompt
+        prompt_path = _write_batch_prompt(prompt)
+
+        started_at = datetime.utcnow().isoformat()
+        update_batch_status(
+            batch_id,
+            status_id=2,
+            input_count=len(input_paths),
+            started_at=started_at,
+            prompt_path=prompt_path,
+        )
+
+        try:
+            response_text = await _call_with_retries(
+                generator=gemini_generator,
+                prompt=prompt,
+                source_paths=input_paths,
+                base_dir=str(lote_dir),
+                prefix='batch',
+                prefer_original_when_single=True,
+                consolidate=False,
+                generator_cycle=[gemini_generator, claude_generator, gpt_generator],
+                upload_delay=UPLOAD_DELAY_SECONDS,
+            )
+            cleaned_text = remove_think_tags(response_text)
+            sanitized = _sanitize_patch_text(cleaned_text) or cleaned_text
+            candidate = _extract_json_candidate(sanitized) or sanitized
+            candidate = _strip_code_fences(candidate) or candidate
+            payload = json.loads(candidate)
+            knowledges = payload.get('knowledges') if isinstance(payload, dict) else None
+            if not isinstance(knowledges, list):
+                raise ValueError("Resposta nao contem chave 'knowledges' com lista valida.")
+
+            output_filename = f"lote_{batch_id:05d}_consolidado.json"
+            output_path = output_dir / output_filename
+            with output_path.open('w', encoding='utf-8') as outfile:
+                json.dump(payload, outfile, ensure_ascii=False, indent=2)
+
+            phase_copy_path = Path(STAGING_PHASE1_RESULTS_DIR) / output_filename
+            shutil.copy2(output_path, phase_copy_path)
+
+            try:
+                config_data = json.loads(lote_config_path.read_text(encoding='utf-8'))
+            except FileNotFoundError:
+                config_data = {}
+            except json.JSONDecodeError:
+                config_data = {}
+            config_data.update({
+                'output_file': str(output_path),
+                'output_count': len(knowledges),
+                'updated_at': datetime.utcnow().isoformat(),
+            })
+            _write_lote_config(lote_config_path, config_data)
+
+            record_batch_file(batch_id, str(output_path), file_size_bytes=output_path.stat().st_size)
+            record_batch_file(batch_id, str(phase_copy_path), file_size_bytes=phase_copy_path.stat().st_size)
+            record_batch_metrics(batch_id, [
+                ('input_files', len(input_paths)),
+                ('output_knowledges', len(knowledges)),
+                ('prompt_length', len(prompt)),
+            ])
+
+            for item in valid_items:
+                update_batch_item_output(
+                    item['id'],
+                    output_path=str(output_path),
+                    status_id=3,
+                )
+
+            finished_at = datetime.utcnow().isoformat()
+            update_batch_status(
+                batch_id,
+                status_id=3,
+                output_count=len(knowledges),
+                finished_at=finished_at,
+                prompt_path=prompt_path,
+            )
+            logger.info(f"Lote {batch_id} concluido com sucesso. {len(knowledges)} conhecimentos consolidados.")
+        except Exception as exc:
+            finished_at = datetime.utcnow().isoformat()
+            logger.error(f"Erro ao processar o lote {batch_id}: {exc}")
+            update_batch_status(
+                batch_id,
+                status_id=4,
+                error_message=str(exc),
+                finished_at=finished_at,
+                prompt_path=prompt_path,
+            )
+            for item in valid_items:
+                update_batch_item_output(
+                    item['id'],
+                    status_id=1,
+                    notes='Lote falhou; item retornou para pendente.',
+                )
+
 async def main():
     parser = argparse.ArgumentParser(description='Pipeline de extracao e geracao de conhecimento.')
     parser.add_argument('--input', type=str, help='Caminho para uma pasta com arquivos .txt para processar.')
@@ -1291,9 +1682,13 @@ async def main():
         await run_stage1_index_creation()
         await process_pending_knowledges()
         await run_stage3_cleanup()
+        await run_stage4_batch_preparation()
+        await run_stage5_batch_execution()
     else:
         await process_pending_knowledges()
         await run_stage3_cleanup()
+        await run_stage4_batch_preparation()
+        await run_stage5_batch_execution()
 
 async def _ensure_valid_json_patch(
     candidate: Optional[str],
