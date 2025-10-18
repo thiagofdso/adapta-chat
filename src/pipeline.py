@@ -1670,6 +1670,492 @@ async def run_stage5_batch_execution():
                     notes='Lote falhou; item retornou para pendente.',
                 )
 
+
+async def run_stage6_phase2_preparation(max_batch_size_phase2: int = DEFAULT_BATCH_SIZE_PHASE2):
+    logger.info('Iniciando Estagio 6: Preparacao de Lotes (Fase 2).')
+    _ensure_staging_directories()
+
+    available_phase1 = get_pending_batch_runs(stage='phase1', status_filter=(3,), consumed=False)
+    if len(available_phase1) <= 1:
+        logger.info('Menos de dois lotes finalizados na fase 1; nenhuma preparacao de fase 2 necessaria.')
+        return
+
+    for chunk in _chunk_sequence(available_phase1, max_batch_size_phase2):
+        successful_entries: List[Dict[str, Any]] = []
+        for batch_row in chunk:
+            output_file = _resolve_batch_output_file(batch_row['id'])
+            if not output_file or not output_file.exists():
+                logger.warning(f"Output do lote {batch_row['id']} nao encontrado; ignorando na montagem da fase 2.")
+                continue
+            successful_entries.append({'row': batch_row, 'output': output_file})
+
+        if len(successful_entries) <= 1:
+            logger.info('Quantidade insuficiente de arquivos validos para montar lote da fase 2.')
+            continue
+
+        parent_ids = [entry['row']['id'] for entry in successful_entries]
+        batch_id = create_batch_run(
+            stage='phase2',
+            max_batch_size=max_batch_size_phase2,
+            token_estimate=0,
+            parent_batch_id=parent_ids[0],
+        )
+        lote_dir = _build_lote_directory(batch_id)
+        input_dir = lote_dir / 'input'
+        config_entries: List[Dict[str, Any]] = []
+        consumed_success: List[int] = []
+
+        for order, entry in enumerate(successful_entries):
+            parent_batch = entry['row']
+            output_path = entry['output']
+            prepared_path = _prepare_existing_output_file(output_path, input_dir, order)
+            if not prepared_path:
+                logger.error(f"Falha ao preparar o arquivo do lote {parent_batch['id']} para a fase 2.")
+                continue
+
+            append_batch_item(
+                batch_id=batch_id,
+                job_id=None,
+                knowledge_id=None,
+                input_path=prepared_path,
+                input_order=order,
+                status_id=1,
+                notes=f"parent_batch={parent_batch['id']}",
+            )
+            config_entries.append({
+                'batch_item_order': order,
+                'parent_batch_id': parent_batch['id'],
+                'source_output': str(output_path),
+                'input_path': prepared_path,
+            })
+            consumed_success.append(parent_batch['id'])
+
+        if len(config_entries) <= 1:
+            logger.warning(f"Nao foi possivel concluir a montagem do lote {batch_id} da fase 2; revertendo consumo.")
+            set_batch_consumed(consumed_success, None)
+            update_batch_status(
+                batch_id,
+                status_id=5,
+                error_message='Lote da fase 2 sem entradas suficientes.',
+            )
+            continue
+
+        lote_config_path = Path(STAGING_BATCHES_DIR) / f"lote_{batch_id:05d}" / 'lote_config.json'
+        config_payload = {
+            'batch_id': batch_id,
+            'stage': 'phase2',
+            'max_batch_size': max_batch_size_phase2,
+            'parent_batches': consumed_success,
+            'source_stage': 'phase1',
+            'entries': config_entries,
+        }
+        _write_lote_config(lote_config_path, config_payload)
+        try:
+            file_size = lote_config_path.stat().st_size
+        except OSError:
+            file_size = 0
+        record_batch_file(batch_id, str(lote_config_path), file_size_bytes=file_size)
+
+        prompt_path = _write_batch_prompt(BATCH_DEDUP_PROMPT)
+        update_batch_status(
+            batch_id,
+            status_id=1,
+            input_count=len(config_entries),
+            prompt_path=prompt_path,
+        )
+
+        timestamp = datetime.utcnow().isoformat()
+        set_batch_consumed(consumed_success, timestamp)
+        logger.info(f"Lote {batch_id} da fase 2 preparado com {len(config_entries)} entradas.")
+
+
+async def run_stage7_phase2_execution():
+    logger.info('Iniciando Estagio 7: Execucao de Lotes (Fase 2).')
+    _ensure_staging_directories()
+
+    pending_batches = get_pending_batch_runs(stage='phase2', status_filter=(1,))
+    if not pending_batches:
+        logger.info('Nenhum lote da fase 2 pendente para execucao.')
+        return
+
+    gemini_generator = GeminiGenerator()
+    claude_generator = ClaudeOpusGenerator()
+    gpt_generator = GPTGenerator()
+
+    for batch in pending_batches:
+        batch_id = batch['id']
+        logger.info(f"Executando lote {batch_id} (fase 2).")
+        lote_dir = _build_lote_directory(batch_id)
+        output_dir = lote_dir / 'output'
+        lote_config_path = lote_dir / 'lote_config.json'
+        config = _load_lote_config(batch_id)
+        parent_batches = config.get('parent_batches', [])
+
+        items = get_batch_items(batch_id)
+        if not items:
+            logger.warning(f"Lote {batch_id} nao possui itens cadastrados. Marcando como descartado.")
+            update_batch_status(
+                batch_id,
+                status_id=5,
+                error_message='Lote sem itens cadastrados.',
+                finished_at=datetime.utcnow().isoformat(),
+            )
+            set_batch_consumed(parent_batches, None)
+            continue
+
+        valid_items = []
+        input_paths: List[str] = []
+        for item in items:
+            input_path = item['input_path']
+            if input_path and os.path.isfile(input_path):
+                valid_items.append(item)
+                input_paths.append(input_path)
+            else:
+                update_batch_item_output(
+                    item['id'],
+                    status_id=5,
+                    notes='Arquivo de entrada ausente para fase 2.',
+                )
+
+        if not input_paths:
+            logger.error(f"Nenhum arquivo valido encontrado para o lote {batch_id}.")
+            update_batch_status(
+                batch_id,
+                status_id=4,
+                error_message='Nenhum arquivo valido encontrado.',
+                finished_at=datetime.utcnow().isoformat(),
+            )
+            set_batch_consumed(parent_batches, None)
+            continue
+
+        for item in valid_items:
+            update_batch_item_output(item['id'], status_id=2)
+
+        upload_display_names = _predict_upload_names(
+            input_paths,
+            base_dir=str(lote_dir),
+            prefix='phase2',
+            prefer_original=True,
+            consolidate=False,
+        )
+        files_prompt = _build_files_prompt_segment(input_paths, str(lote_dir), upload_display_names)
+        prompt = BATCH_DEDUP_PROMPT + files_prompt
+        prompt_path = _write_batch_prompt(prompt)
+
+        started_at = datetime.utcnow().isoformat()
+        update_batch_status(
+            batch_id,
+            status_id=2,
+            input_count=len(input_paths),
+            started_at=started_at,
+            prompt_path=prompt_path,
+        )
+
+        try:
+            response_text = await _call_with_retries(
+                generator=gemini_generator,
+                prompt=prompt,
+                source_paths=input_paths,
+                base_dir=str(lote_dir),
+                prefix='phase2',
+                prefer_original_when_single=True,
+                consolidate=False,
+                generator_cycle=[gemini_generator, claude_generator, gpt_generator],
+                upload_delay=UPLOAD_DELAY_SECONDS,
+            )
+            cleaned_text = remove_think_tags(response_text)
+            sanitized = _sanitize_patch_text(cleaned_text) or cleaned_text
+            candidate = _extract_json_candidate(sanitized) or sanitized
+            candidate = _strip_code_fences(candidate) or candidate
+            payload = json.loads(candidate)
+            knowledges = payload.get('knowledges') if isinstance(payload, dict) else None
+            if not isinstance(knowledges, list):
+                raise ValueError("Resposta nao contem a chave 'knowledges' com lista valida.")
+
+            output_filename = f"fase2_lote_{batch_id:05d}_consolidado.json"
+            output_path = output_dir / output_filename
+            with output_path.open('w', encoding='utf-8') as outfile:
+                json.dump(payload, outfile, ensure_ascii=False, indent=2)
+
+            phase_copy_path = Path(STAGING_PHASE2_RESULTS_DIR) / output_filename
+            shutil.copy2(output_path, phase_copy_path)
+
+            config.update({
+                'output_file': str(output_path),
+                'output_count': len(knowledges),
+                'parent_batches': parent_batches,
+                'updated_at': datetime.utcnow().isoformat(),
+            })
+            _write_lote_config(lote_config_path, config)
+
+            record_batch_file(batch_id, str(output_path), file_size_bytes=output_path.stat().st_size)
+            record_batch_file(batch_id, str(phase_copy_path), file_size_bytes=phase_copy_path.stat().st_size)
+            record_batch_metrics(batch_id, [
+                ('input_files', len(input_paths)),
+                ('output_knowledges', len(knowledges)),
+                ('prompt_length', len(prompt)),
+            ])
+
+            for item in valid_items:
+                update_batch_item_output(
+                    item['id'],
+                    output_path=str(output_path),
+                    status_id=3,
+                )
+
+            finished_at = datetime.utcnow().isoformat()
+            update_batch_status(
+                batch_id,
+                status_id=3,
+                output_count=len(knowledges),
+                finished_at=finished_at,
+                prompt_path=prompt_path,
+            )
+            logger.info(f"Lote {batch_id} da fase 2 concluido com {len(knowledges)} conhecimentos.")
+        except Exception as exc:
+            finished_at = datetime.utcnow().isoformat()
+            logger.error(f"Erro ao processar o lote {batch_id} da fase 2: {exc}")
+            update_batch_status(
+                batch_id,
+                status_id=4,
+                error_message=str(exc),
+                finished_at=finished_at,
+                prompt_path=prompt_path,
+            )
+            set_batch_consumed(parent_batches, None)
+            for item in valid_items:
+                update_batch_item_output(
+                    item['id'],
+                    status_id=1,
+                    notes='Falha na fase 2; item retorna a pendente.',
+                )
+
+
+async def run_stage8_finalize_index():
+    logger.info('Iniciando Estagio 8: Finalizacao do indice consolidado.')
+    _ensure_staging_directories()
+    os.makedirs(PROCESSED_DIR, exist_ok=True)
+
+    available_phase2 = get_pending_batch_runs(stage='phase2', status_filter=(3,), consumed=False)
+    if not available_phase2:
+        fallback_phase1 = get_pending_batch_runs(stage='phase1', status_filter=(3,), consumed=False)
+        if len(fallback_phase1) == 1:
+            source_path = _resolve_batch_output_file(fallback_phase1[0]['id'])
+            if source_path and source_path.exists():
+                shutil.copy2(source_path, FINAL_INDEX_PATH)
+                timestamp = datetime.utcnow().isoformat()
+                set_batch_consumed([fallback_phase1[0]['id']], timestamp)
+                record_batch_file(fallback_phase1[0]['id'], FINAL_INDEX_PATH, file_size_bytes=os.path.getsize(FINAL_INDEX_PATH))
+                logger.info('Indice final gerado a partir de unico lote da fase 1.')
+            else:
+                logger.warning('Arquivo de saida do lote unico da fase 1 nao localizado; finalizacao ignorada.')
+        else:
+            logger.info('Nenhum lote pendente para finalizacao.')
+        return
+
+    sources_info: List[Dict[str, Any]] = []
+    for batch in available_phase2:
+        output_path = _resolve_batch_output_file(batch['id'])
+        if output_path and output_path.exists():
+            sources_info.append({'batch': batch, 'path': output_path})
+        else:
+            logger.warning(f"Output do lote da fase 2 {batch['id']} nao encontrado; ignorando.")
+
+    if not sources_info:
+        logger.info('Nenhum arquivo valido encontrado entre os lotes da fase 2 para finalizar.')
+        return
+
+    parent_batch_ids = [info['batch']['id'] for info in sources_info]
+    final_batch_id = create_batch_run(
+        stage='final',
+        max_batch_size=len(sources_info),
+        token_estimate=0,
+        parent_batch_id=parent_batch_ids[0],
+    )
+    lote_dir = _build_lote_directory(final_batch_id)
+    input_dir = lote_dir / 'input'
+    output_dir = lote_dir / 'output'
+    config_entries: List[Dict[str, Any]] = []
+
+    for order, info in enumerate(sources_info):
+        prepared_path = _prepare_existing_output_file(Path(info['path']), input_dir, order)
+        if not prepared_path:
+            logger.error(f"Falha ao preparar arquivo do lote {info['batch']['id']} para consolidacao final.")
+            continue
+        append_batch_item(
+            batch_id=final_batch_id,
+            job_id=None,
+            knowledge_id=None,
+            input_path=prepared_path,
+            input_order=order,
+            status_id=1,
+            notes=f"parent_batch={info['batch']['id']}",
+        )
+        config_entries.append({
+            'batch_item_order': order,
+            'parent_batch_id': info['batch']['id'],
+            'source_output': str(info['path']),
+            'input_path': prepared_path,
+        })
+
+    if not config_entries:
+        logger.error('Nenhum arquivo preparado para consolidacao final.')
+        update_batch_status(
+            final_batch_id,
+            status_id=4,
+            error_message='Consolidacao final sem entradas validas.',
+            finished_at=datetime.utcnow().isoformat(),
+        )
+        set_batch_consumed(parent_batch_ids, None)
+        return
+
+    lote_config_path = Path(STAGING_BATCHES_DIR) / f"lote_{final_batch_id:05d}" / 'lote_config.json'
+    config_payload = {
+        'batch_id': final_batch_id,
+        'stage': 'final',
+        'parent_batches': parent_batch_ids,
+        'entries': config_entries,
+    }
+    _write_lote_config(lote_config_path, config_payload)
+    try:
+        file_size = lote_config_path.stat().st_size
+    except OSError:
+        file_size = 0
+    record_batch_file(final_batch_id, str(lote_config_path), file_size_bytes=file_size)
+
+    prompt_path = _write_batch_prompt(BATCH_DEDUP_PROMPT)
+    update_batch_status(
+        final_batch_id,
+        status_id=2 if len(config_entries) > 1 else 1,
+        input_count=len(config_entries),
+        prompt_path=prompt_path,
+        started_at=datetime.utcnow().isoformat() if len(config_entries) > 1 else None,
+    )
+
+    batch_items_final = get_batch_items(final_batch_id)
+
+    if len(config_entries) == 1:
+        source_file = Path(config_entries[0]['input_path'])
+        try:
+            payload = json.loads(source_file.read_text(encoding='utf-8'))
+            knowledge_count = len(payload.get('knowledges', [])) if isinstance(payload, dict) else 0
+        except Exception:
+            knowledge_count = 0
+
+        output_path = output_dir / 'final_consolidado.json'
+        shutil.copy2(source_file, output_path)
+        shutil.copy2(output_path, FINAL_INDEX_PATH)
+
+        record_batch_file(final_batch_id, str(output_path), file_size_bytes=output_path.stat().st_size)
+        record_batch_file(final_batch_id, FINAL_INDEX_PATH, file_size_bytes=os.path.getsize(FINAL_INDEX_PATH))
+        for item in batch_items_final:
+            update_batch_item_output(
+                item['id'],
+                output_path=str(output_path),
+                status_id=3,
+            )
+        finished_at = datetime.utcnow().isoformat()
+        update_batch_status(
+            final_batch_id,
+            status_id=3,
+            output_count=knowledge_count,
+            finished_at=finished_at,
+            prompt_path=prompt_path,
+        )
+        set_batch_consumed(parent_batch_ids, finished_at)
+        logger.info('Indice final gerado a partir de unico arquivo consolidado da fase 2.')
+        return
+
+    input_paths = [entry['input_path'] for entry in config_entries]
+    upload_display_names = _predict_upload_names(
+        input_paths,
+        base_dir=str(lote_dir),
+        prefix='final',
+        prefer_original=True,
+        consolidate=False,
+    )
+    files_prompt = _build_files_prompt_segment(input_paths, str(lote_dir), upload_display_names)
+    prompt = BATCH_DEDUP_PROMPT + files_prompt
+    prompt_path = _write_batch_prompt(prompt)
+    update_batch_status(
+        final_batch_id,
+        status_id=2,
+        prompt_path=prompt_path,
+    )
+
+    gemini_generator = GeminiGenerator()
+    claude_generator = ClaudeOpusGenerator()
+    gpt_generator = GPTGenerator()
+
+    try:
+        response_text = await _call_with_retries(
+            generator=gemini_generator,
+            prompt=prompt,
+            source_paths=input_paths,
+            base_dir=str(lote_dir),
+            prefix='final',
+            prefer_original_when_single=True,
+            consolidate=False,
+            generator_cycle=[gemini_generator, claude_generator, gpt_generator],
+            upload_delay=UPLOAD_DELAY_SECONDS,
+        )
+        cleaned_text = remove_think_tags(response_text)
+        sanitized = _sanitize_patch_text(cleaned_text) or cleaned_text
+        candidate = _extract_json_candidate(sanitized) or sanitized
+        candidate = _strip_code_fences(candidate) or candidate
+        payload = json.loads(candidate)
+        knowledges = payload.get('knowledges') if isinstance(payload, dict) else None
+        if not isinstance(knowledges, list):
+            raise ValueError("Resposta final nao contem 'knowledges' valido.")
+
+        output_path = output_dir / 'final_consolidado.json'
+        with output_path.open('w', encoding='utf-8') as outfile:
+            json.dump(payload, outfile, ensure_ascii=False, indent=2)
+
+        shutil.copy2(output_path, FINAL_INDEX_PATH)
+        record_batch_file(final_batch_id, str(output_path), file_size_bytes=output_path.stat().st_size)
+        record_batch_file(final_batch_id, FINAL_INDEX_PATH, file_size_bytes=os.path.getsize(FINAL_INDEX_PATH))
+
+        for item in batch_items_final:
+            update_batch_item_output(
+                item['id'],
+                output_path=str(output_path),
+                status_id=3,
+            )
+
+        finished_at = datetime.utcnow().isoformat()
+        update_batch_status(
+            final_batch_id,
+            status_id=3,
+            output_count=len(knowledges),
+            finished_at=finished_at,
+            prompt_path=prompt_path,
+        )
+        set_batch_consumed(parent_batch_ids, finished_at)
+        record_batch_metrics(final_batch_id, [
+            ('input_files', len(input_paths)),
+            ('output_knowledges', len(knowledges)),
+            ('prompt_length', len(prompt)),
+        ])
+        logger.info('Indice final consolidado com sucesso.')
+    except Exception as exc:
+        finished_at = datetime.utcnow().isoformat()
+        logger.error(f"Erro ao consolidar indice final: {exc}")
+        update_batch_status(
+            final_batch_id,
+            status_id=4,
+            error_message=str(exc),
+            finished_at=finished_at,
+            prompt_path=prompt_path,
+        )
+        set_batch_consumed(parent_batch_ids, None)
+        for item in batch_items_final:
+            update_batch_item_output(
+                item['id'],
+                status_id=1,
+                notes='Consolidacao final falhou; item retorna a pendente.',
+            )
+
 async def main():
     parser = argparse.ArgumentParser(description='Pipeline de extracao e geracao de conhecimento.')
     parser.add_argument('--input', type=str, help='Caminho para uma pasta com arquivos .txt para processar.')
@@ -1684,11 +2170,17 @@ async def main():
         await run_stage3_cleanup()
         await run_stage4_batch_preparation()
         await run_stage5_batch_execution()
+        await run_stage6_phase2_preparation()
+        await run_stage7_phase2_execution()
+        await run_stage8_finalize_index()
     else:
         await process_pending_knowledges()
         await run_stage3_cleanup()
         await run_stage4_batch_preparation()
         await run_stage5_batch_execution()
+        await run_stage6_phase2_preparation()
+        await run_stage7_phase2_execution()
+        await run_stage8_finalize_index()
 
 async def _ensure_valid_json_patch(
     candidate: Optional[str],
