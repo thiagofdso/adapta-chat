@@ -1007,14 +1007,14 @@ async def run_stage1_index_creation():
             )
             while True:
                 raw_response = await _call_with_retries(
-                    generator=claude_generator,
+                    generator=gemini_generator,
                     prompt=None,
                     source_paths=source_files,
                     base_dir=folder_path,
                     prefix='stage1',
                     prefer_original_when_single=True,
                     consolidate=False,
-                    generator_cycle=[claude_generator, gpt_generator, gemini_generator],
+                    generator_cycle=[gemini_generator, claude_generator, gpt_generator],
                     messages=conversation,
                     tool="",
                     prepared_uploads=prepared_uploads,
