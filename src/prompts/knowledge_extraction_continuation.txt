@@ -5,21 +5,26 @@ Your objective is to:
 * Compare the current document with the index file supplied as attachment and produce only the differential JSON Patch operations needed to keep the index up to date.
 
 # CONTEXT
+
 The document is a transcript of an online course.
 
 # CURRENT FILE
+
 ```
 {current_file}
 ```
 
 # CURRENT INDEX
+
 The current index is split across the following supporting files (each contains at most 300 knowledges):
 {current_index_files}
 
 # INDEX SUMMARY
+
 {index_bounds_info}
 
 # INDEX ADDRESSING (ENGLISH GUIDE)
+
 Excerpt (abridged):
 {
   "knowledges": [
@@ -41,14 +46,16 @@ Path rules:
   {"op":"add","path":"/knowledges/0/files/-","value":"novo_material.txt"}
 
 # OUTPUT FORMAT SAMPLE
+
 <format>
 {"patch":[{"op":"add","path":"/knowledges/-","value":{"name":"Novo insight","description":"Resumo objetivo do novo conhecimento.","files":["arquivo_atual.txt"]}},{"op":"add","path":"/knowledges/0/files/-","value":"arquivo_atual.txt"}]}
 </format>
 
 # RULES
-* Indices reference the knowledge record counter
-* Considere a contagem cumulativa entre os arquivos de indice, se o arquivo 1 possui 300, a contagem do arquivo 2 começa a partir de 300 por exemplo, e assim sussecivamente.
-* Use zero-based indices for `/knowledges/<index>`; that is, start counting from 0.
+
+* Considere a contagem cumulativa entre os arquivos de indice, se o arquivo 1 possui 300, a contagem do arquivo 2 começa a partir de 300 por exemplo, e assim sucessivamente.
+* <index> refers to the count of each knowledge from the array *knowledges* 
+* Use zero-based indices for `/knowledges/<index>`; that is, start counting from 0. Review INDEX SUMMARY to see the bounds.
 * **NEVER use** `"replace"` or `"remove"` operations; only `"add"` is allowed.
 * Write in Portuguese.
 * Respond only with valid JSON in the format defined in <format> (no code fences).

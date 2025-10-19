@@ -38,7 +38,7 @@ INITIAL_RETRY_DELAY = 2.0
 MAX_INDEX_CHUNK_SIZE = 300
 UPLOAD_DELAY_SECONDS = 2.0
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-STAGE2_CONCURRENCY = 5
+STAGE2_CONCURRENCY = 15
 
 os.makedirs(INDEXES_PATH, exist_ok=True)
 
@@ -975,14 +975,14 @@ async def run_stage1_index_creation():
             )
             while True:
                 raw_response = await _call_with_retries(
-                    generator=gemini_generator,
+                    generator=claude_generator,
                     prompt=None,
                     source_paths=source_files,
                     base_dir=folder_path,
                     prefix='stage1',
                     prefer_original_when_single=True,
                     consolidate=False,
-                    generator_cycle=[gemini_generator, claude_generator, gpt_generator],
+                    generator_cycle=[claude_generator, gpt_generator, gemini_generator],
                     messages=conversation,
                     tool="",
                     prepared_uploads=prepared_uploads,
