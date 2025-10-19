@@ -38,6 +38,7 @@ INITIAL_RETRY_DELAY = 2.0
 MAX_INDEX_CHUNK_SIZE = 300
 UPLOAD_DELAY_SECONDS = 2.0
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+STAGE2_CONCURRENCY = 5
 
 os.makedirs(INDEXES_PATH, exist_ok=True)
 
@@ -550,6 +551,7 @@ def _prepare_upload_specs(
     prefix: str,
     prefer_original: bool,
     consolidate: bool,
+    unique_hint: Optional[str] = None,
 ) -> List[Tuple[Path, bool]]:
     if not file_paths:
         raise ValueError("Nenhum arquivo fonte informado para upload.")
@@ -560,6 +562,7 @@ def _prepare_upload_specs(
             base_dir=base_dir,
             prefix=prefix,
             prefer_original=prefer_original,
+            unique_hint=unique_hint,
         )
         return [(upload_path, cleanup)]
 
@@ -582,7 +585,8 @@ def _prepare_upload_file(
     file_paths: List[str],
     base_dir: Optional[str],
     prefix: str,
-    prefer_original: bool
+    prefer_original: bool,
+    unique_hint: Optional[str] = None,
 ) -> Tuple[Path, bool]:
     if not file_paths:
         raise ValueError("Nenhum arquivo fonte informado para upload.")
@@ -591,7 +595,10 @@ def _prepare_upload_file(
         return Path(file_paths[0]), False
 
     if prefix == 'stage2':
-        temp_filename = 'stage2_temp.txt'
+        slug = slugify(str(unique_hint) or 'stage2')
+        if not slug:
+            slug = 'stage2'
+        temp_filename = f"{prefix}_{slug}_{uuid.uuid4().hex[:8]}.txt"
     else:
         hints = "_".join(Path(str(p)).stem for p in file_paths)
         digest_key = "|".join(str(p) for p in file_paths)
@@ -754,6 +761,7 @@ async def _call_with_retries(
     persist_uploads: bool = False,
     upload_context: Optional[Dict[Any, List[Tuple[Dict[str, Any], bool, Path]]]] = None,
     upload_delay: float = 0.0,
+    upload_unique_hint: Optional[str] = None,
 ) -> str:
     if not source_paths:
         raise ValueError("Nenhum arquivo fonte informado para upload.")
@@ -800,6 +808,7 @@ async def _call_with_retries(
                     prefix=prefix,
                     prefer_original=prefer_original_when_single,
                     consolidate=consolidate,
+                    unique_hint=upload_unique_hint,
                 )
                 if persist_uploads or prepared_uploads is not None:
                     local_prepared_uploads = uploads
@@ -1138,85 +1147,92 @@ async def run_stage1_index_creation():
 async def process_pending_knowledges():
     _ensure_pending_knowledges_synced()
     logger.info('Iniciando Estagio 2: Criacao de Arquivos de Conhecimento.')
-    pending_knowledges = get_pending_knowledges()
+    pending_rows = list(get_pending_knowledges())
 
-    if not pending_knowledges:
+    if not pending_rows:
         logger.info('Nenhum conhecimento pendente para processar.')
         return
 
-    generator = ClaudeOpusGenerator()
     with open(KNOWLEDGE_PROMPT_PATH, 'r', encoding='utf-8') as f:
         prompt_template = f.read()
 
-    for knowledge_row in pending_knowledges:
-        knowledge = dict(knowledge_row)
-        knowledge_id = knowledge['knowledge_id']
-        folder_path = knowledge['knowledge_folder_path']
-        source_files = _extract_file_names(knowledge)
-        knowledge_category = str(knowledge.get('knowledge_category') or 'Geral').strip() or 'Geral'
+    semaphore = asyncio.Semaphore(STAGE2_CONCURRENCY)
 
-        logger.info(f"Processando conhecimento ID: {knowledge_id} - {knowledge['knowledge_name']}")
+    async def run_with_limit(row: Dict[str, Any]) -> None:
+        async with semaphore:
+            await _process_single_knowledge(row, prompt_template)
 
-        try:
-            if os.path.isabs(folder_path):
-                abs_folder_path = folder_path
-            else:
-                abs_folder_path = os.path.join(BASE_DIR, folder_path)
+    tasks = [asyncio.create_task(run_with_limit(dict(row))) for row in pending_rows]
+    await asyncio.gather(*tasks)
 
-            consolidated_sources: List[str] = []
-            if source_files:
-                for file_name in source_files:
-                    file_path = os.path.join(abs_folder_path, file_name)
-                    if os.path.isfile(file_path):
-                        consolidated_sources.append(file_path)
-                    else:
-                        logger.warning(f"Arquivo {file_name} nao encontrado em {abs_folder_path}.")
 
-            if not consolidated_sources:
-                logger.error(f"Nenhum arquivo de origem encontrado para o conhecimento {knowledge_id}.")
-                update_knowledge_status(knowledge_id, status_id=1)
-                continue
+async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: str) -> None:
+    knowledge_id = knowledge['knowledge_id']
+    folder_path = knowledge['knowledge_folder_path']
+    knowledge_name = knowledge.get('knowledge_name') or f"Conhecimento {knowledge_id}"
+    source_files = _extract_file_names(knowledge)
+    knowledge_category = str(knowledge.get('knowledge_category') or 'Geral').strip() or 'Geral'
 
-            prompt = prompt_template.replace('{knowledge_category}', knowledge_category)
-            prompt = prompt.replace('{knowledge_name}', knowledge['knowledge_name'])
-            #prompt = prompt.replace('{related_context}', "Nenhum conhecimento relacionado adicional foi informado.")
-            upload_display_names_stage2 = _predict_upload_names(
-                consolidated_sources,
-                abs_folder_path,
-                prefix='stage2',
-                prefer_original=True,
-                consolidate=True,
-            )
-            source_prompt = _build_files_prompt_segment(consolidated_sources, abs_folder_path, upload_display_names_stage2)
-            if source_prompt:
-                prompt += source_prompt
+    logger.info(f"Processando conhecimento ID: {knowledge_id} - {knowledge_name}")
 
-            markdown_output = await _call_with_retries(
-                generator=generator,
-                prompt=prompt,
-                source_paths=consolidated_sources,
-                base_dir=abs_folder_path,
-                prefix='stage2',
-                prefer_original_when_single=True,
-                tool="",
-            )
-            markdown_output = remove_think_tags(markdown_output)
+    try:
+        abs_folder_path = folder_path if os.path.isabs(folder_path) else os.path.join(BASE_DIR, folder_path)
 
-            knowledge_slug = slugify(knowledge['knowledge_name'])
-            output_dir = get_docs_output_dir(folder_path)
-            os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f"{knowledge_slug}.md")
+        consolidated_sources: List[str] = []
+        if source_files:
+            for file_name in source_files:
+                file_path = os.path.join(abs_folder_path, file_name)
+                if os.path.isfile(file_path):
+                    consolidated_sources.append(file_path)
+                else:
+                    logger.warning(f"Arquivo {file_name} nao encontrado em {abs_folder_path}.")
 
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(markdown_output)
-            logger.info(f"Arquivo Markdown salvo em: {output_path}")
-
-            update_knowledge_status(knowledge_id, status_id=3)
-            logger.info(f"Conhecimento {knowledge_id} concluido com sucesso.")
-
-        except Exception as e:
-            logger.error(f"Erro ao processar o conhecimento {knowledge_id}: {e}")
+        if not consolidated_sources:
+            logger.error(f"Nenhum arquivo de origem encontrado para o conhecimento {knowledge_id}.")
             update_knowledge_status(knowledge_id, status_id=1)
+            return
+
+        prompt = prompt_template.replace('{knowledge_category}', knowledge_category)
+        prompt = prompt.replace('{knowledge_name}', knowledge_name)
+        upload_display_names_stage2 = _predict_upload_names(
+            consolidated_sources,
+            abs_folder_path,
+            prefix='stage2',
+            prefer_original=True,
+            consolidate=True,
+        )
+        source_prompt = _build_files_prompt_segment(consolidated_sources, abs_folder_path, upload_display_names_stage2)
+        if source_prompt:
+            prompt += source_prompt
+
+        generator = ClaudeOpusGenerator()
+        markdown_output = await _call_with_retries(
+            generator=generator,
+            prompt=prompt,
+            source_paths=consolidated_sources,
+            base_dir=abs_folder_path,
+            prefix='stage2',
+            prefer_original_when_single=True,
+            tool="",
+            upload_unique_hint=str(knowledge_id),
+        )
+        markdown_output = remove_think_tags(markdown_output)
+
+        knowledge_slug = slugify(knowledge_name)
+        output_dir = get_docs_output_dir(folder_path)
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, f"{knowledge_slug}.md")
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(markdown_output)
+        logger.info(f"Arquivo Markdown salvo em: {output_path}")
+
+        update_knowledge_status(knowledge_id, status_id=3)
+        logger.info(f"Conhecimento {knowledge_id} concluido com sucesso.")
+
+    except Exception as exc:
+        logger.error(f"Erro ao processar o conhecimento {knowledge_id}: {exc}")
+        update_knowledge_status(knowledge_id, status_id=1)
 
 
 def _ensure_pending_knowledges_synced():
