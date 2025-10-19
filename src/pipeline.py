@@ -12,7 +12,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from database import (
     add_knowledges_from_json,
-    are_all_knowledges_completed_for_job,
+    are_all_knowledges_completed_for_folder,
+    count_knowledges_by_folder,
     create_job,
     get_completed_jobs_by_stage,
     get_pending_jobs_by_stage,
@@ -36,6 +37,7 @@ MAX_RETRIES = 10
 INITIAL_RETRY_DELAY = 2.0
 MAX_INDEX_CHUNK_SIZE = 300
 UPLOAD_DELAY_SECONDS = 2.0
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 os.makedirs(INDEXES_PATH, exist_ok=True)
 
@@ -330,52 +332,6 @@ def _extract_file_names(row: Dict[str, Any]) -> List[str]:
     return files
 
 
-def _extract_related_ids(row: Dict[str, Any]) -> List[int]:
-    raw = None
-    if isinstance(row, dict):
-        raw = row.get('related_ids')
-    if not raw:
-        return []
-    related: List[int] = []
-    seen = set()
-    for value in str(raw).split('||'):
-        value = value.strip()
-        if not value:
-            continue
-        try:
-            related_id = int(value)
-        except ValueError:
-            continue
-        if related_id <= 0 or related_id in seen:
-            continue
-        seen.add(related_id)
-        related.append(related_id)
-    return related
-
-
-def _lookup_related_names(index_data: Dict[str, Any], related_ids: List[int]) -> List[str]:
-    if not related_ids:
-        return []
-
-    knowledges = index_data.get('knowledges') or []
-    names: List[str] = []
-    seen = set()
-
-    for raw_id in related_ids:
-        try:
-            idx = int(raw_id) - 1  # knowledge_id_from_json e 1-based
-        except (TypeError, ValueError):
-            continue
-        if idx < 0 or idx >= len(knowledges):
-            continue
-        name = str(knowledges[idx].get('name') or '').strip()
-        if name and name not in seen:
-            seen.add(name)
-            names.append(name)
-
-    return names
-
-
 def _split_json_pointer(path: str) -> List[str]:
     if not path or path == '/':
         return []
@@ -634,9 +590,12 @@ def _prepare_upload_file(
     if prefer_original and len(file_paths) == 1:
         return Path(file_paths[0]), False
 
-    hints = "_".join(Path(str(p)).stem for p in file_paths)
-    digest_key = "|".join(str(p) for p in file_paths)
-    temp_filename = _compute_temp_upload_name(prefix, hints, digest_key)
+    if prefix == 'stage2':
+        temp_filename = 'stage2_temp.txt'
+    else:
+        hints = "_".join(Path(str(p)).stem for p in file_paths)
+        digest_key = "|".join(str(p) for p in file_paths)
+        temp_filename = _compute_temp_upload_name(prefix, hints, digest_key)
     temp_path = _create_consolidated_temp_file(file_paths, base_dir, prefix, temp_filename=temp_filename)
     return temp_path, True
 
@@ -1107,6 +1066,7 @@ async def run_stage1_index_creation():
                             'name': sanitized_all[idx]['name'],
                             'description': sanitized_all[idx]['description'],
                             'files': sanitized_all[idx]['files'],
+                            'folder_path': folder_path,
                         }
                         for idx in matched_indices
                     ]
@@ -1127,6 +1087,7 @@ async def run_stage1_index_creation():
                             'name': entry['name'],
                             'description': entry['description'],
                             'files': entry['files'],
+                            'folder_path': folder_path,
                         }
                         for idx, entry in enumerate(sanitized_all)
                     ]
@@ -1135,8 +1096,7 @@ async def run_stage1_index_creation():
             save_index_data(index_path, index_data)
 
             if knowledges_for_stage2:
-                add_knowledges_from_json(job_id, knowledges_for_stage2)
-                logger.info(f"{len(knowledges_for_stage2)} conhecimentos inseridos no banco de dados para o job {job_id}.")
+                logger.info(f"{len(knowledges_for_stage2)} novos conhecimentos identificados para o job {job_id}.")
             else:
                 logger.info("Nenhum novo conhecimento identificado para este arquivo.")
 
@@ -1176,6 +1136,7 @@ async def run_stage1_index_creation():
                         logger.warning(f"Falha ao remover arquivo de depuracao {debug_path}: {cleanup_exc}")
 
 async def process_pending_knowledges():
+    _ensure_pending_knowledges_synced()
     logger.info('Iniciando Estagio 2: Criacao de Arquivos de Conhecimento.')
     pending_knowledges = get_pending_knowledges()
 
@@ -1187,51 +1148,46 @@ async def process_pending_knowledges():
     with open(KNOWLEDGE_PROMPT_PATH, 'r', encoding='utf-8') as f:
         prompt_template = f.read()
 
-    index_cache: Dict[str, Dict] = {}
-
-    for knowledge in pending_knowledges:
+    for knowledge_row in pending_knowledges:
+        knowledge = dict(knowledge_row)
         knowledge_id = knowledge['knowledge_id']
-        folder_path = knowledge['job_folder_path']
+        folder_path = knowledge['knowledge_folder_path']
         source_files = _extract_file_names(knowledge)
-        related_ids = _extract_related_ids(knowledge)
-
-        if folder_path not in index_cache:
-            index_cache[folder_path] = load_index_data(get_index_file_path(folder_path))
-        index_data = index_cache[folder_path]
-        related_names = _lookup_related_names(index_data, related_ids)
+        knowledge_category = str(knowledge.get('knowledge_category') or 'Geral').strip() or 'Geral'
 
         logger.info(f"Processando conhecimento ID: {knowledge_id} - {knowledge['knowledge_name']}")
 
         try:
-            update_knowledge_status(knowledge_id, status_id=2)
+            if os.path.isabs(folder_path):
+                abs_folder_path = folder_path
+            else:
+                abs_folder_path = os.path.join(BASE_DIR, folder_path)
 
             consolidated_sources: List[str] = []
             if source_files:
                 for file_name in source_files:
-                    file_path = os.path.join(folder_path, file_name)
+                    file_path = os.path.join(abs_folder_path, file_name)
                     if os.path.isfile(file_path):
                         consolidated_sources.append(file_path)
                     else:
-                        logger.warning(f"Arquivo {file_name} nao encontrado em {folder_path}.")
+                        logger.warning(f"Arquivo {file_name} nao encontrado em {abs_folder_path}.")
 
             if not consolidated_sources:
-                consolidated_sources.append(knowledge['job_file_path'])
+                logger.error(f"Nenhum arquivo de origem encontrado para o conhecimento {knowledge_id}.")
+                update_knowledge_status(knowledge_id, status_id=1)
+                continue
 
-            prompt = prompt_template.replace('{knowledge_category}', knowledge['knowledge_category'])
+            prompt = prompt_template.replace('{knowledge_category}', knowledge_category)
             prompt = prompt.replace('{knowledge_name}', knowledge['knowledge_name'])
-            if related_names:
-                related_block = "Conhecimentos relacionados fornecidos:\n" + "\n".join(f"- {name}" for name in related_names)
-            else:
-                related_block = "Nenhum conhecimento relacionado adicional foi informado."
-            prompt = prompt.replace('{related_context}', related_block)
+            #prompt = prompt.replace('{related_context}', "Nenhum conhecimento relacionado adicional foi informado.")
             upload_display_names_stage2 = _predict_upload_names(
                 consolidated_sources,
-                folder_path,
+                abs_folder_path,
                 prefix='stage2',
                 prefer_original=True,
                 consolidate=True,
             )
-            source_prompt = _build_files_prompt_segment(consolidated_sources, folder_path, upload_display_names_stage2)
+            source_prompt = _build_files_prompt_segment(consolidated_sources, abs_folder_path, upload_display_names_stage2)
             if source_prompt:
                 prompt += source_prompt
 
@@ -1239,7 +1195,7 @@ async def process_pending_knowledges():
                 generator=generator,
                 prompt=prompt,
                 source_paths=consolidated_sources,
-                base_dir=folder_path,
+                base_dir=abs_folder_path,
                 prefix='stage2',
                 prefer_original_when_single=True,
                 tool="",
@@ -1263,6 +1219,53 @@ async def process_pending_knowledges():
             update_knowledge_status(knowledge_id, status_id=1)
 
 
+def _ensure_pending_knowledges_synced():
+    stage2_jobs = list(get_completed_jobs_by_stage(stage_id=2))
+    stage3_jobs = list(get_completed_jobs_by_stage(stage_id=3))
+    completed_jobs = stage2_jobs + stage3_jobs
+    if not completed_jobs:
+        return
+
+    processed_folders: set[str] = set()
+    to_insert: Dict[str, List[Dict[str, Any]]] = {}
+
+    for job in completed_jobs:
+        folder_path = job['folder_path']
+        if not folder_path or folder_path in processed_folders:
+            continue
+        processed_folders.add(folder_path)
+        index_path = get_index_file_path(folder_path)
+        index_data = load_index_data(index_path)
+        entries = index_data.get('knowledges') or []
+        if not entries:
+            logger.warning(f"Indice vazio ao sincronizar conhecimentos para {folder_path}.")
+            continue
+        existing_count = count_knowledges_by_folder(folder_path)
+        if existing_count >= len(entries):
+            continue
+        start_idx = max(existing_count, 0)
+        index_path = get_index_file_path(folder_path)
+        payload: List[Dict[str, Any]] = []
+        for idx, entry in enumerate(entries[start_idx:], start=start_idx):
+            sanitized = _sanitize_knowledge_entry(entry)
+            files = sanitized.get('files') or []
+            payload.append({
+                'index': idx,
+                'name': sanitized.get('name') or '',
+                'description': sanitized.get('description') or '',
+                'files': files,
+                'folder_path': folder_path,
+                'status_id': 1,
+            })
+        to_insert[folder_path] = payload
+
+    for folder_path, payload in to_insert.items():
+        if not payload:
+            continue
+        add_knowledges_from_json(payload)
+        logger.info(f"{len(payload)} conhecimentos sincronizados a partir de {get_index_file_path(folder_path)}.")
+
+
 async def run_stage3_cleanup():
     logger.info('Iniciando Estagio 3: Limpeza e Finalizacao de Jobs.')
     completed_stage2_jobs = get_completed_jobs_by_stage(stage_id=2)
@@ -1273,7 +1276,8 @@ async def run_stage3_cleanup():
 
     for job in completed_stage2_jobs:
         job_id = job['id']
-        if are_all_knowledges_completed_for_job(job_id):
+        folder_path = job['folder_path']
+        if are_all_knowledges_completed_for_folder(folder_path):
             logger.info(f"Todos os conhecimentos para o job {job_id} estao concluidos. Finalizando...")
             update_job_state(job_id, stage_id=3, status_id=3)
             logger.info(f"Job {job_id} finalizado com sucesso.")
