@@ -8,6 +8,17 @@ Your objective is to:
 
 The document is a transcript of an online course.
 
+# KNOWLEDGE EXTRACTION CRITERIA
+Extract knowledge pieces that are:
+- Actionable strategies or techniques
+- Specific processes or frameworks
+- Tools and artifacts mentioned
+- Case studies with results
+- Tips with clear application
+- Metrics and KPIs mentioned
+- Concepts
+- Other knowlege types you discover
+
 # CURRENT FILE
 
 ```
@@ -53,6 +64,7 @@ Path rules:
 
 # RULES
 
+* New Knowledge names must start with the type, example Estudo de Caso ..., Conceito ..., Estrategia ..., etc
 * Considere a contagem cumulativa entre os arquivos de indice, se o arquivo 1 possui 300, a contagem do arquivo 2 começa a partir de 300 por exemplo, e assim sucessivamente.
 * <index> refers to the count of each knowledge from the array *knowledges* 
 * Use zero-based indices for `/knowledges/<index>`; that is, start counting from 0. Review INDEX SUMMARY to see the bounds.

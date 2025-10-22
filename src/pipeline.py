@@ -56,11 +56,103 @@ def slugify(text: str) -> str:
     return text.strip('-')
 
 
+def _folder_slug_parts(folder_path: str) -> List[str]:
+    if not folder_path:
+        return []
+
+    normalized = os.path.normpath(folder_path)
+    path = Path(normalized)
+    try:
+        base_path = Path(BASE_DIR).resolve()
+        resolved_path = path.resolve()
+        relative_path = resolved_path.relative_to(base_path)
+    except (ValueError, OSError):
+        relative_path = None
+    else:
+        relative_parts: List[str] = []
+        for part in relative_path.parts:
+            slug_part = slugify(part)
+            if slug_part:
+                relative_parts.append(slug_part)
+        if relative_parts:
+            return relative_parts
+
+    parts: List[str] = []
+    anchor = path.anchor
+
+    if not path.drive and anchor and anchor not in (os.sep, ''):
+        stripped_anchor = anchor.strip(os.sep)
+        if stripped_anchor:
+            for anchor_part in stripped_anchor.split(os.sep):
+                slug = slugify(anchor_part)
+                if slug and slug not in parts:
+                    parts.append(slug)
+
+    for part in path.parts:
+        if part in ('', os.sep, '.', '..', anchor, path.drive):
+            continue
+        slug_part = slugify(part)
+        if slug_part and slug_part not in parts:
+            parts.append(slug_part)
+    return parts
+
+
+def _build_folder_slug(folder_path: str, fallback: str) -> str:
+    parts = _folder_slug_parts(folder_path)
+    if not parts:
+        return fallback
+    slug = '_'.join(parts)
+    return slug or fallback
+
+
 def _sanitize_temp_identifier(identifier: str) -> str:
     sanitized = re.sub(r'[^A-Za-z0-9_-]+', '-', identifier)
     sanitized = re.sub(r'-{2,}', '-', sanitized)
     sanitized = sanitized.strip('-_')
     return sanitized or 'arquivo'
+
+
+WINDOWS_RESERVED_NAMES = {
+    'CON',
+    'PRN',
+    'AUX',
+    'NUL',
+    *[f'COM{i}' for i in range(1, 10)],
+    *[f'LPT{i}' for i in range(1, 10)],
+}
+
+
+def _sanitize_reference_name(name: str, fallback: str = 'Conhecimento') -> str:
+    sanitized = re.sub(r'[<>:"/\\\\|?*]', ' ', str(name))
+    sanitized = re.sub(r'\s+', ' ', sanitized)
+    sanitized = sanitized.strip(' .')
+    return sanitized or fallback
+
+
+def _sanitize_windows_filename(name: str, fallback: str = 'arquivo') -> str:
+    sanitized = re.sub(r'[\\/:*?"<>|]', '', str(name))
+    sanitized = re.sub(r'[\x00-\x1f]', '', sanitized)
+    sanitized = sanitized.strip()
+    sanitized = sanitized.rstrip('. ')
+    if not sanitized:
+        sanitized = fallback
+    if sanitized.upper() in WINDOWS_RESERVED_NAMES:
+        sanitized = f"{sanitized}_{uuid.uuid4().hex[:4]}"
+    return sanitized
+
+
+def _build_sanitized_index_json(folder_path: str) -> str:
+    index_path = get_index_file_path(folder_path)
+    index_data = load_index_data(index_path)
+    entries: List[Dict[str, Any]] = index_data.get('knowledges') or []
+
+    sanitized_entries: List[Dict[str, Any]] = []
+    for idx, entry in enumerate(entries, start=1):
+        sanitized_entry = dict(entry)
+        sanitized_entry['name'] = _sanitize_reference_name(entry.get('name') or '', fallback=f"Conhecimento {idx}")
+        sanitized_entries.append(sanitized_entry)
+
+    return json.dumps({'knowledges': sanitized_entries}, ensure_ascii=False, indent=2)
 
 
 def _sanitize_patch_text(text: Optional[str]) -> Optional[str]:
@@ -81,8 +173,7 @@ def _compute_temp_upload_name(prefix: str, name_hint: str, digest_key: Optional[
 
 
 def get_index_file_path(folder_path: str) -> str:
-    folder_name = os.path.basename(os.path.normpath(folder_path)) or 'indice'
-    slug = slugify(folder_name) or 'indice'
+    slug = _build_folder_slug(folder_path, 'indice')
     return os.path.join(INDEXES_PATH, f"{slug}.json")
 
 
@@ -133,8 +224,7 @@ def _write_index_files(index_path: str, knowledges: List[Dict[str, Any]]) -> Lis
 
 
 def get_docs_output_dir(folder_path: str) -> str:
-    folder_name = os.path.basename(os.path.normpath(folder_path)) or 'conteudo'
-    folder_slug = slugify(folder_name) or 'conteudo'
+    folder_slug = _build_folder_slug(folder_path, 'conteudo')
     return f"{DOCS_PREFIX}{folder_slug}"
 
 
@@ -899,11 +989,26 @@ def process_input_folder(folder_path):
     if not os.path.isdir(folder_path):
         logger.error(f"O caminho '{folder_path}' nao e um diretorio valido.")
         return
+    pending_dirs: List[str] = [os.path.abspath(folder_path)]
 
-    for filename in os.listdir(folder_path):
-        if filename.endswith('.txt'):
-            file_path = os.path.abspath(os.path.join(folder_path, filename))
-            create_job(file_path, filename, folder_path)
+    while pending_dirs:
+        current_dir = pending_dirs.pop()
+        try:
+            with os.scandir(current_dir) as iterator:
+                entries = sorted(list(iterator), key=lambda entry: entry.name.lower())
+        except OSError as exc:
+            logger.warning(f"Falha ao listar conteudo de {current_dir}: {exc}")
+            continue
+
+        for entry in entries:
+            entry_path = entry.path
+            if entry.is_dir(follow_symlinks=False):
+                pending_dirs.append(entry_path)
+                logger.debug(f"Encontrada subpasta para processamento: {entry_path}")
+                continue
+            if entry.is_file(follow_symlinks=False) and entry.name.endswith('.txt'):
+                file_path = os.path.abspath(entry_path)
+                create_job(file_path, entry.name, current_dir)
 
 
 async def run_stage1_index_creation():
@@ -1157,10 +1262,26 @@ async def process_pending_knowledges():
         prompt_template = f.read()
 
     semaphore = asyncio.Semaphore(STAGE2_CONCURRENCY)
+    index_cache: Dict[str, str] = {}
+
+    def get_sanitized_index_json(folder: str) -> str:
+        if folder not in index_cache:
+            try:
+                index_cache[folder] = _build_sanitized_index_json(folder)
+            except Exception as exc:
+                logger.warning(f"Falha ao construir indice sanitizado para {folder}: {exc}")
+                index_cache[folder] = '[]'
+        return index_cache[folder]
 
     async def run_with_limit(row: Dict[str, Any]) -> None:
         async with semaphore:
-            await _process_single_knowledge(row, prompt_template)
+            folder = row.get('knowledge_folder_path') or ''
+            sanitized_row = dict(row)
+            sanitized_row['sanitized_index_json'] = get_sanitized_index_json(folder)
+            sanitized_row['knowledge_prompt_name'] = _sanitize_reference_name(
+                sanitized_row.get('knowledge_name') or f"Conhecimento {sanitized_row.get('knowledge_id')}"
+            )
+            await _process_single_knowledge(sanitized_row, prompt_template)
 
     tasks = [asyncio.create_task(run_with_limit(dict(row))) for row in pending_rows]
     await asyncio.gather(*tasks)
@@ -1170,6 +1291,7 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
     knowledge_id = knowledge['knowledge_id']
     folder_path = knowledge['knowledge_folder_path']
     knowledge_name = knowledge.get('knowledge_name') or f"Conhecimento {knowledge_id}"
+    prompt_knowledge_name = knowledge.get('knowledge_prompt_name') or knowledge_name
     source_files = _extract_file_names(knowledge)
     knowledge_category = str(knowledge.get('knowledge_category') or 'Geral').strip() or 'Geral'
 
@@ -1192,8 +1314,11 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
             update_knowledge_status(knowledge_id, status_id=1)
             return
 
+        raw_index_content = knowledge.get('sanitized_index_json') or '[]'
+
         prompt = prompt_template.replace('{knowledge_category}', knowledge_category)
-        prompt = prompt.replace('{knowledge_name}', knowledge_name)
+        prompt = prompt.replace('{knowledge_name}', prompt_knowledge_name)
+        prompt = prompt.replace('{index_knowledge}', raw_index_content)
         upload_display_names_stage2 = _predict_upload_names(
             consolidated_sources,
             abs_folder_path,
@@ -1221,10 +1346,23 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
         knowledge_slug = slugify(knowledge_name)
         output_dir = get_docs_output_dir(folder_path)
         os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, f"{knowledge_slug}.md")
 
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(markdown_output)
+        primary_name = _sanitize_windows_filename(knowledge_name, fallback=knowledge_slug or 'conhecimento')
+        primary_filename = f"{primary_name}.md"
+        fallback_filename = f"{knowledge_slug}.md"
+        output_path = os.path.join(output_dir, primary_filename)
+
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(markdown_output)
+        except (OSError, ValueError) as file_error:
+            logger.warning(
+                f"Falha ao salvar arquivo com o nome original '{primary_filename}'. Tentando com slug. Erro: {file_error}"
+            )
+            output_path = os.path.join(output_dir, fallback_filename)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(markdown_output)
+
         logger.info(f"Arquivo Markdown salvo em: {output_path}")
 
         update_knowledge_status(knowledge_id, status_id=3)
