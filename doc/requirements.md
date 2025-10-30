@@ -1,4 +1,4 @@
-# Functional Requirements
+﻿# Functional Requirements
 
 This document outlines the functional requirements of the Adapta-Chat project.
 
@@ -40,5 +40,5 @@ This document outlines the functional requirements of the Adapta-Chat project.
 - **FR-029: Index Partitioning:** The knowledge index must be persisted em arquivos fracionados com no maximo 300 registros cada (indexes/<slug>_part_XXX.json) e cada parte deve ser enviada individualmente como anexo nas requisicoes de JSON Patch.
 - **FR-025: Knowledge Persistence:** Each knowledge piece from the generated JSON index must be saved as a distinct record in the database with a "pending" status, linked to its parent job.
 - **FR-026: Markdown Generation:** For each pending knowledge record, the system must use the Claude Opus model to generate a detailed, structured Markdown file based on a specific template.
-- **FR-027: Structured File Output:** Generated Markdown files must be saved to a structured, sanitized path based on the source document and knowledge name (`docs/{document-name}/{knowledge-name}.md`).
+- **FR-027: Structured File Output:** Generated Markdown files must be saved under um diretório raiz `docs_<raiz>` derivado da pasta de entrada e devem preservar a hierarquia relativa das subpastas com nomes slugificados antes do arquivo Markdown final.
 - **FR-028: Job Finalization and Cleanup:** Once all knowledge items for a specific job have been successfully generated, the system must update the parent job's stage to "complete" and automatically delete any temporary JSON files created during the indexing stage.

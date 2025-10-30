@@ -224,8 +224,15 @@ def _write_index_files(index_path: str, knowledges: List[Dict[str, Any]]) -> Lis
 
 
 def get_docs_output_dir(folder_path: str) -> str:
-    folder_slug = _build_folder_slug(folder_path, 'conteudo')
-    return f"{DOCS_PREFIX}{folder_slug}"
+    parts = _folder_slug_parts(folder_path)
+    if not parts:
+        return f"{DOCS_PREFIX}conteudo"
+
+    root = f"{DOCS_PREFIX}{parts[0]}"
+    if len(parts) == 1:
+        return root
+
+    return str(Path(root).joinpath(*parts[1:]))
 
 
 def load_index_data(index_path: str) -> Dict:

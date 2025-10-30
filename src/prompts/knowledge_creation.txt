@@ -22,35 +22,35 @@ Your objective is to:
 
 # [KNOWLEDGE TITLE]
 
-## Categoria
+## 🎯 Categoria
 [Estrategia/Tecnica/Ferramenta/Processo/Framework/Case Study/Tip/...]
 
-## Descricao
+## 📝 Descricao
 [Detailed explanation of the knowledge piece - DO NOT SUMMARIZE]
 
-## Como Aplicar
+## ⚡Como Aplicar
 [Step-by-step implementation when applicable]
 
-## Metricas/Resultados
+## 📊 Metricas/Resultados
 [Expected outcomes, KPIs, or case study results when mentioned]
 
-## Ferramentas Necessarias
+## 🔧 Ferramentas Necessarias
 [Tools, platforms, or resources needed]
 
 ## Consideracoes
 [Limitations, prerequisites, or important notes]
 
-## Conhecimentos Relacionados
+## 🔗Conhecimentos Relacionados
 -   [[Conhecimento Relacionado 1]]
 -   [[Conhecimento Relacionado 2]]
 -   ...
 -   [[Conhecimento Relacionado N]]
 
-## Fonte
+## 📚Fonte
 **Documento:** [Nome do arquivo fonte]
 **Pagina/Secao:** [Se aplicavel]
 
-## Tags
+## 🏷️ Tags
 #[categoria-especifica] #[canal/plataforma] #[tipo-de-conteudo]
 
 Use apenas os dados presentes nos arquivos anexados para gerar o markdown.
