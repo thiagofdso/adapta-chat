@@ -27,8 +27,6 @@ CLERK_JS_VERSION = "5.103.1"
 DEFAULT_MODEL = "CLAUDE_4_5_SONNET"
 
 FILE_API_BASE = f"{AGENT_BASE_URL}/api/file"
-DIRECT_UPLOAD_ENDPOINT = f"{FILE_API_BASE}/direct-upload-url"
-METADATA_ENDPOINT = f"{FILE_API_BASE}/metadata"
 FILE_UPLOAD_V2_ENDPOINT = f"{API_AGENT_BASE_URL}/api/file/upload"
 FILES_LIST_ENDPOINT = f"{AGENT_BASE_URL}/api/files/list/v1"
 FILES_DELETE_ENDPOINT = f"{AGENT_BASE_URL}/api/files/delete/v1"
@@ -288,67 +286,68 @@ class AdaptaClientV2:
 
         tamanho_bytes = file_path.stat().st_size
         mime_type = FORMATOS_MIME.get(extensao, "application/octet-stream")
+        file_bytes = file_path.read_bytes()
 
-        request_headers = {
-            "accept": "application/json",
+        headers = {
+            "accept": "*/*",
             "authorization": f"Bearer {token}",
-            "content-type": "application/json",
             "origin": AGENT_BASE_URL,
             "referer": f"{AGENT_BASE_URL}/",
         }
 
-        inicial_payload = {
-            "originalFilename": file_path.name,
-            "mimeType": mime_type,
-            "sizeInBytes": tamanho_bytes,
-            "toCompany": False,
+        files = {
+            "file": (file_path.name, file_bytes, mime_type),
         }
 
         response = await client.post(
-            DIRECT_UPLOAD_ENDPOINT,
-            headers=request_headers,
-            json=inicial_payload,
+            FILE_UPLOAD_V2_ENDPOINT,
+            headers=headers,
+            files=files,
         )
         response.raise_for_status()
-        upload_data = response.json().get("data") or {}
+        payload = response.json()
+        raw_data = payload.get("data")
 
-        upload_url = upload_data.get("uploadUrl")
-        file_key = upload_data.get("fileKey")
-        required_headers = upload_data.get("requiredHeaders") or {}
-        if not upload_url or not file_key:
-            raise RuntimeError(f"Dados insuficientes para upload: {upload_data}")
+        if isinstance(raw_data, dict):
+            upload_info = raw_data
+        elif isinstance(raw_data, list) and raw_data:
+            upload_info = raw_data[0]
+        else:
+            raise RuntimeError(f"Resposta inesperada do endpoint de upload: {payload}")
 
-        upload_headers = dict(required_headers)
-        upload_headers.setdefault("Content-Type", mime_type)
+        if not isinstance(upload_info, dict):
+            raise RuntimeError(f"Formato invalido nos dados de upload: {upload_info}")
 
-        file_bytes = file_path.read_bytes()
-        put_response = await client.put(upload_url, headers=upload_headers, content=file_bytes)
-        put_response.raise_for_status()
+        filename = upload_info.get("fileName") or file_path.name
+        url = upload_info.get("signedUrl") or upload_info.get("url")
+        if not url:
+            raise RuntimeError(f"URL assinada nao retornada pelo endpoint: {upload_info}")
 
-        metadata_payload = {
-            "fileKey": file_key,
-            "sizeInBytes": tamanho_bytes,
-            "mimeType": mime_type,
-            "originalFilename": file_path.name,
-            "toCompany": False,
-        }
-
-        metadata_response = await client.post(
-            METADATA_ENDPOINT,
-            headers=request_headers,
-            json=metadata_payload,
+        size = (
+            upload_info.get("fileSizeInBytes")
+            or upload_info.get("sizeInBytes")
+            or upload_info.get("size")
+            or tamanho_bytes
         )
-        metadata_response.raise_for_status()
-        metadata = metadata_response.json().get("data") or metadata_response.json()
+        media_type = (
+            upload_info.get("fileMimeType")
+            or upload_info.get("mimeType")
+            or upload_info.get("mediaType")
+            or mime_type
+        )
+        path = (
+            upload_info.get("filePathOnStorage")
+            or upload_info.get("path")
+            or upload_info.get("fileKey")
+            or file_path.name
+        )
 
         return {
-            "id": metadata.get("id"),
-            "path": metadata.get("path") or metadata.get("fileKey"),
-            "url": metadata.get("url"),
-            "signed_url": metadata.get("signedUrl") or metadata.get("signed_url") or metadata.get("url"),
-            "size": metadata.get("sizeInBytes") or metadata.get("size") or tamanho_bytes,
-            "mediaType": metadata.get("mediaType") or metadata.get("mimeType") or mime_type,
-            "filename": metadata.get("originalFilename") or metadata.get("filename") or file_path.name,
+            "filename": filename,
+            "url": url,
+            "size": size,
+            "mediaType": media_type,
+            "path": path,
         }
 
     async def list_files(
@@ -1011,14 +1010,12 @@ async def _main() -> None:
         print(f"Cookies coletados: {masked}")
 
         local_file = Path("teste.txt")
-        uploaded_from_local = False
         uploaded: Dict[str, Any]
         uploaded_path: Optional[str] = None
 
         if local_file.exists():
             try:
                 uploaded = await client.upload_file(str(local_file))
-                uploaded_from_local = True
                 uploaded_path = uploaded.get("path")
                 print(f"Upload concluido para {uploaded_path}")
             except Exception as exc:
@@ -1028,111 +1025,24 @@ async def _main() -> None:
             print("Arquivo teste.txt nao encontrado; utilizando arquivo de referencia padrao.")
             uploaded = {}
 
-        if not uploaded:
-            uploaded = {
-                "filename": "Ajustes-Manual.txt",
-                "url": (
-                    "https://adapta-one-prod.s3.sa-east-1.amazonaws.com/"
-                    "thiagofdso.ufpa%40gmail.com/txt/Ajustes-Manual.txt?"
-                    "X-Amz-Algorithm=AWS4-HMAC-SHA256&"
-                    "X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&"
-                    "X-Amz-Credential=AKIA3FLD6RMYLYFE2L2Q%2F20251030%2Fsa-east-1%2Fs3%2Faws4_request&"
-                    "X-Amz-Date=20251030T042638Z&"
-                    "X-Amz-Expires=43200&"
-                    "X-Amz-Signature=4a1d3223bc6f0a9b6b03929892a4a4aba6917faf8520feec97b07e7e903042ed&"
-                    "X-Amz-SignedHeaders=host&"
-                    "x-amz-checksum-mode=ENABLED&"
-                    "x-id=GetObject"
-                ),
-                "size": 35777,
-                "mediaType": "text/plain",
-                "path": "thiagofdso.ufpa@gmail.com/txt/Ajustes-Manual.txt",
-            }
-            uploaded_path = uploaded.get("path")
-
-        list_result = await client.list_files(limit=10, search=uploaded.get("filename"))
-        files_listed = list_result.get("files", [])
-        print(f"\nArquivos retornados: {len(files_listed)} (exibindo ate 3)")
-        for entry in files_listed[:3]:
-            print(f" - {entry.get('filename')} ({entry.get('path')})")
-
-        matched_entry: Optional[Dict[str, Any]] = None
-        if uploaded_path:
-            for entry in files_listed:
-                if entry.get("path") == uploaded_path:
-                    matched_entry = entry
-                    break
-
-        download_source = matched_entry or uploaded
-        try:
-            download_dir = Path("downloads")
-            download_name = download_source.get("filename") or "arquivo-baixado.txt"
-            download_path = download_dir / download_name
-            downloaded_file = await client.download_file(download_source, download_path)
-            print(f"Arquivo baixado para {downloaded_file}")
-        except Exception as exc:
-            print(f"Download nao realizado: {exc}")
-
-        chat_file_payload = {
-            "filename": download_source.get("filename"),
-            "url": download_source.get("url") or download_source.get("signed_url"),
-            "size": download_source.get("size"),
-            "mediaType": download_source.get("mediaType") or download_source.get("mime_type"),
-            "path": download_source.get("path"),
-        }
-        chat_file_payload = {k: v for k, v in chat_file_payload.items() if v is not None}
-
         pergunta = "quantos topicos tem o manual"
-
         chat_ids: List[str] = []
 
         print("\n--- Streaming em tempo real ---")
-        async for kind, trecho in client.chat_completion_stream(pergunta, files=[chat_file_payload]):
+        
+        async for kind, trecho in client.chat_completion_stream(pergunta, files=[uploaded]):
             if kind == "thought":
-                print(f"[stream/pensamento] {trecho}")
+                print("\n\n\nPensando...\n\n\n")
+                print(trecho, end='', flush=True)
+                print("\n\n\nPensamento Concluido\n\n\n")
             elif kind == "answer":
-                print(f"[stream/resposta] {trecho}")
-            elif kind == "answer_end":
-                print("[stream] --- fim da resposta ---")
+                print(trecho, end='', flush=True)
         stream_chat_id = client.last_chat_id
         if stream_chat_id:
             chat_ids.append(stream_chat_id)
             print(f"Chat ID (stream): {stream_chat_id}")
-
-        agregado = await client.chat_completion(pergunta, files=[chat_file_payload])
-        agregado_chat_id = client.last_chat_id
-        if agregado_chat_id:
-            chat_ids.append(agregado_chat_id)
-        print("\n--- Mensagens agregadas ---")
-        if agregado_chat_id:
-            print(f"Chat ID (agregado): {agregado_chat_id}")
-        for idx, msg in enumerate(agregado.messages, start=1):
-            print(f"{idx:02d}. ({msg['kind']}) {msg['text']}")
-
-        agregado_sem_pensamento = await client.chat_completion(
-            pergunta,
-            files=[chat_file_payload],
-            ignoreThoughts=True,
-        )
-        agregado_sem_chat_id = client.last_chat_id
-        if agregado_sem_chat_id:
-            chat_ids.append(agregado_sem_chat_id)
-        print("\n--- Mensagens agregadas (ignoreThoughts=True) ---")
-        if agregado_sem_chat_id:
-            print(f"Chat ID (agregado sem pensamento): {agregado_sem_chat_id}")
-        for idx, msg in enumerate(agregado_sem_pensamento.messages, start=1):
-            print(f"{idx:02d}. ({msg['kind']}) {msg['text']}")
-
-        if chat_ids:
-            unique_chat_ids = list(dict.fromkeys(chat_ids))
-            delete_result = await client.delete_chats(unique_chat_ids)
-            print("\n--- Exclusao de chats ---")
-            print(f"Chat IDs removidos: {unique_chat_ids}")
-            print(f"Resposta da API: {delete_result}")
-        else:
-            print("\nNenhum chat_id gerado para excluir.")
-
-        if uploaded_from_local and uploaded_path:
+            
+        if uploaded_path:
             try:
                 removal = await client.delete_file(uploaded_path)
                 print(f"\nArquivo remoto teste.txt removido: {removal}")
