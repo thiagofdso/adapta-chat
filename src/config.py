@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     )
 
     # Configuracoes do Adapta.one
+    adapta_login: str = Field(..., description="Login do Adapta.one a partir da variavel ADAPTA_LOGIN")
+    adapta_password: str = Field(..., description="Senha do Adapta.one a partir da variavel ADAPTA_PASSWORD")
     adapta_cookies_str: str = Field(..., description="Cookies de autenticacao do Adapta.one")
     adapta_session_id: Optional[str] = Field(
         default=None,
