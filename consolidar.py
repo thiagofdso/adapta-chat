@@ -52,7 +52,7 @@ def processar_pasta(pasta_origem):
     contador_arquivo = 1
     conteudo_atual = ""
     palavras_atual = 0
-    max_palavras = 500000
+    max_palavras = 300000
     
     print(f"Processando {len(arquivos_txt)} arquivos .txt da pasta '{pasta_origem}'...")
     
