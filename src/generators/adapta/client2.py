@@ -12,7 +12,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple, Union
 
 import httpx
 
@@ -173,16 +173,23 @@ class AdaptaClientV2:
         *,
         model: str = DEFAULT_MODEL,
         files: Optional[List[Dict[str, Any]]] = None,
+        deep_research: bool = False,
     ) -> AsyncGenerator[Tuple[str, str], None]:
         """Executa uma chamada streaming retornando eventos (kind, texto).
 
         kind:
             - "thought": trechos classificados como pensamento/analysis.
             - "answer": fragmentos incrementais da resposta.
-            - "answer_end": indicador de término de um bloco de resposta.
+            - "answer_end": indicador de termino de um bloco de resposta.
+
+        Ative `deep_research=True` para requisitar a ferramenta deepResearch da API.
         """
         async for event_type, payload in self._chat_event_stream(
-            prompt, model=model, files=files, include_tool_events=True
+            prompt,
+            model=model,
+            files=files,
+            include_tool_events=True,
+            deep_research=deep_research,
         ):
             if event_type in {"thought", "answer", "answer_end"}:
                 yield (event_type, payload)
@@ -194,12 +201,14 @@ class AdaptaClientV2:
         model: str = DEFAULT_MODEL,
         files: Optional[List[Dict[str, Any]]] = None,
         ignore_thoughts: Optional[bool] = None,
+        deep_research: bool = False,
         **kwargs: Any,
     ) -> ChatCompletionResult:
         """Executa a chamada agregada retornando os eventos em ordem.
 
         Use `ignore_thoughts=True` (ou `ignoreThoughts=True`) para ocultar trechos
         classificados como pensamento.
+        Utilize `deep_research=True` para acionar o fluxo de pesquisa aprofundada.
         """
         if "ignoreThoughts" in kwargs:
             ignore_thoughts = kwargs.pop("ignoreThoughts")
@@ -217,6 +226,7 @@ class AdaptaClientV2:
             model=model,
             files=files,
             include_tool_events=True,
+            deep_research=deep_research,
         ):
             if event_type == "answer":
                 current_answer_chunks.append(payload)
@@ -754,6 +764,7 @@ class AdaptaClientV2:
         model: str,
         files: Optional[List[Dict[str, Any]]] = None,
         include_tool_events: bool,
+        deep_research: bool,
     ) -> AsyncGenerator[Tuple[str, str], None]:
         client = await self._ensure_client()
         await self._ensure_authenticated()
@@ -762,11 +773,11 @@ class AdaptaClientV2:
         chat_id = _generate_uuid7_like()
         message_id = _generate_uuid7_like()
         self._last_chat_id = chat_id
-        logger.info("Gerado chat_id=%s message_id=%s para nova requisicao de chat.", chat_id, message_id)
-        analytics_tasks = [
-            asyncio.create_task(self._register_chat_view(chat_id)),
-            asyncio.create_task(self._send_amplitude_event(chat_id, model)),
-        ]
+        logger.info(f"Gerado chat_id={chat_id}  para nova requisicao de chat.")
+        #analytics_tasks = [
+        #    asyncio.create_task(self._register_chat_view(chat_id)),
+        #    asyncio.create_task(self._send_amplitude_event(chat_id, model)),
+        #]
 
         parts: List[Dict[str, Any]] = []
         if files:
@@ -784,7 +795,7 @@ class AdaptaClientV2:
         parts.append({"type": "text", "text": prompt})
 
         payload = {
-            "mandatoryTools": [],
+            "mandatoryTools": ["deepResearch"] if deep_research else [],
             "chatId": chat_id,
             "contextsIds": [],
             "meetingContextsIds": [],
@@ -842,6 +853,17 @@ class AdaptaClientV2:
                             thought_parts.append(analysis)
                             if include_tool_events:
                                 yield ("thought", analysis)
+
+                        table_payload = output.get("table")
+                        if isinstance(table_payload, dict):
+                            table_text = self._format_table_output(table_payload)
+                            if table_text:
+                                yield ("answer", table_text)
+
+                        research_text = self._format_deep_research_output(output)
+                        if research_text:
+                            yield ("answer", research_text)
+                        continue
                         continue
 
                     if event_type == "text-delta":
@@ -855,13 +877,212 @@ class AdaptaClientV2:
                             yield ("answer_end", "")
                         continue
         finally:
-            if analytics_tasks:
-                await asyncio.gather(*analytics_tasks, return_exceptions=True)
+            print("")
+            #if analytics_tasks:
+                #await asyncio.gather(*analytics_tasks, return_exceptions=True)
 
         if thought_parts:
             self._last_thought = "\n\n".join(thought_parts).strip()
         else:
             self._last_thought = None
+
+    def _format_table_output(self, table_payload: Dict[str, Any]) -> Optional[str]:
+        """Converte a estrutura de tabela retornada pela API em markdown simples."""
+        data = table_payload.get("data")
+        if not isinstance(data, dict):
+            return None
+
+        headers = data.get("headers")
+        rows = data.get("rows")
+
+        if not isinstance(headers, list) or not headers:
+            return None
+
+        formatted_headers = [self._stringify_table_cell(header) for header in headers]
+        header_line = "| " + " | ".join(formatted_headers) + " |"
+        separator_line = "| " + " | ".join("---" for _ in formatted_headers) + " |"
+
+        lines = [header_line, separator_line]
+
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, list):
+                    continue
+
+                formatted_row = [self._stringify_table_cell(cell) for cell in row]
+                if len(formatted_row) < len(formatted_headers):
+                    formatted_row.extend([""] * (len(formatted_headers) - len(formatted_row)))
+                elif len(formatted_row) > len(formatted_headers):
+                    formatted_row = formatted_row[: len(formatted_headers)]
+
+                lines.append("| " + " | ".join(formatted_row) + " |")
+
+        return "\n".join(lines) + "\n"
+
+    def _stringify_table_cell(self, value: Any) -> str:
+        """Normaliza os valores das celulas para texto plano."""
+        if value is None:
+            return ""
+
+        if isinstance(value, str):
+            text = value
+        elif isinstance(value, (int, float)):
+            text = str(value)
+        elif isinstance(value, list):
+            parts = [self._stringify_table_cell(item) for item in value if item is not None]
+            text = ", ".join(part for part in parts if part)
+        elif isinstance(value, dict):
+            for key in ("text", "value", "title", "content"):
+                if key in value:
+                    return self._stringify_table_cell(value[key])
+            text = str(value)
+        else:
+            text = str(value)
+
+        return text.replace("\r", " ").replace("\n", " ").strip()
+
+    def _format_deep_research_output(self, output: Dict[str, Any]) -> Optional[str]:
+        """Formata respostas do deepResearch (resumo, insights e fontes)."""
+        data = output.get("data")
+        if not isinstance(data, dict):
+            return None
+
+        sections: List[str] = []
+
+        summary = self._coerce_research_text(data.get("summary"), preserve_newlines=True)
+        if summary:
+            sections.append(summary)
+
+        for field, heading in (
+            ("insights", "Insights principais"),
+            ("keyInsights", "Insights principais"),
+            ("keyFindings", "Principais achados"),
+            ("highlights", "Destaques"),
+        ):
+            section_text = self._format_research_list(data.get(field))
+            if section_text:
+                sections.append(f"{heading}:\n{section_text}")
+
+        results_text = self._format_research_results(data.get("results"))
+        if results_text:
+            sections.append(f"Resultados encontrados:\n{results_text}")
+
+        sources_text = self._format_research_sources(data.get("sources"))
+        if sources_text:
+            sections.append(f"Fontes:\n{sources_text}")
+
+        if not sections:
+            return None
+
+        combined = "\n\n".join(section.rstrip() for section in sections if section)
+        if not combined.endswith("\n"):
+            combined += "\n"
+        return combined
+
+    def _format_research_list(self, value: Any) -> Optional[str]:
+        """Converte listas ou strings genericas em marcadores."""
+        if isinstance(value, list):
+            lines = []
+            for item in value:
+                text = self._coerce_research_text(item)
+                if text:
+                    lines.append(f"- {text}")
+            return "\n".join(lines) if lines else None
+        if isinstance(value, str):
+            text = self._coerce_research_text(value)
+            return f"- {text}" if text else None
+        return None
+
+    def _format_research_results(self, value: Any) -> Optional[str]:
+        """Formata a secao de resultados detalhados (URL, snippet)."""
+        if not isinstance(value, list):
+            return None
+
+        lines: List[str] = []
+        seen_urls: Set[str] = set()
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            url = self._coerce_research_text(entry.get("url"))
+            title = self._coerce_research_text(entry.get("title"))
+            snippet = self._coerce_research_text(entry.get("snippet"), preserve_newlines=True)
+
+            if url:
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
+
+            primary = title or url
+            if not primary:
+                continue
+
+            line = primary
+            if url and url not in primary:
+                line = f"{line} - {url}" if line else url
+
+            snippet = snippet.replace("\n", " ").strip() if snippet else ""
+            if snippet:
+                line = f"{line}\n  {snippet}"
+
+            lines.append(f"- {line}".rstrip())
+
+        return "\n".join(lines[:10]) if lines else None
+
+    def _format_research_sources(self, value: Any) -> Optional[str]:
+        """Formata a lista de fontes retornadas pelo deepResearch."""
+        if not isinstance(value, list):
+            return None
+
+        lines: List[str] = []
+        seen: Set[Tuple[str, str]] = set()
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            title = self._coerce_research_text(entry.get("title"))
+            url = self._coerce_research_text(entry.get("url"))
+            description = self._coerce_research_text(entry.get("description"))
+
+            key = (title, url)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            line = title or url
+            if url and url not in line:
+                line = f"{line} - {url}" if line else url
+            if description:
+                line = f"{line}\n  {description}"
+
+            lines.append(f"- {line}".rstrip())
+
+        return "\n".join(lines[:10]) if lines else None
+
+    def _coerce_research_text(self, value: Any, *, preserve_newlines: bool = False) -> str:
+        """Normaliza valores arbitrarios em texto simples."""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            text = value.replace("\r", "\n").strip()
+            if preserve_newlines:
+                return text
+            return " ".join(text.split())
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, list):
+            items = [
+                self._coerce_research_text(item, preserve_newlines=preserve_newlines)
+                for item in value
+            ]
+            items = [item for item in items if item]
+            if preserve_newlines:
+                return "\n".join(items)
+            return ", ".join(items)
+        if isinstance(value, dict):
+            for key in ("text", "summary", "description", "content", "value", "title", "snippet"):
+                if key in value:
+                    return self._coerce_research_text(value[key], preserve_newlines=preserve_newlines)
+            return ""
+        return str(value)
 
     async def logout(self) -> None:
         """Efetua o logout encerrando a sessao atual."""
@@ -1009,28 +1230,12 @@ async def _main() -> None:
         print(f"Session ID: {result.session_id}")
         print(f"Cookies coletados: {masked}")
 
-        local_file = Path("teste.txt")
-        uploaded: Dict[str, Any]
-        uploaded_path: Optional[str] = None
-
-        if local_file.exists():
-            try:
-                uploaded = await client.upload_file(str(local_file))
-                uploaded_path = uploaded.get("path")
-                print(f"Upload concluido para {uploaded_path}")
-            except Exception as exc:
-                print(f"Falha ao enviar teste.txt: {exc}")
-                uploaded = {}
-        else:
-            print("Arquivo teste.txt nao encontrado; utilizando arquivo de referencia padrao.")
-            uploaded = {}
-
-        pergunta = "quantos topicos tem o manual"
+        pergunta = "gere uma tabela comparando scrum e xp"
         chat_ids: List[str] = []
 
         print("\n--- Streaming em tempo real ---")
         
-        async for kind, trecho in client.chat_completion_stream(pergunta, files=[uploaded]):
+        async for kind, trecho in client.chat_completion_stream(pergunta):
             if kind == "thought":
                 print("\n\n\nPensando...\n\n\n")
                 print(trecho, end='', flush=True)
@@ -1041,13 +1246,6 @@ async def _main() -> None:
         if stream_chat_id:
             chat_ids.append(stream_chat_id)
             print(f"Chat ID (stream): {stream_chat_id}")
-            
-        if uploaded_path:
-            try:
-                removal = await client.delete_file(uploaded_path)
-                print(f"\nArquivo remoto teste.txt removido: {removal}")
-            except Exception as exc:
-                print(f"\nNao foi possivel remover teste.txt: {exc}")
 
         await client.logout()
         print("\nLogout concluido.")
