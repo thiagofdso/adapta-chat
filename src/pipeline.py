@@ -49,6 +49,13 @@ os.makedirs(INDEXES_PATH, exist_ok=True)
 
 CHAT_LOG_PATH = Path(INDEXES_PATH) / 'chat.md'
 MAX_PATCH_RETRIES = 6
+
+SUPPORTED_INPUT_EXTENSIONS = {'.txt', '.pdf'}
+DIRECT_UPLOAD_EXTENSIONS = SUPPORTED_INPUT_EXTENSIONS.copy()
+
+
+def _is_supported_job_file(filename: str) -> bool:
+    return Path(filename).suffix.lower() in SUPPORTED_INPUT_EXTENSIONS
 def slugify(text: str) -> str:
     text = text.lower()
     text = re.sub(r"[\s_]+", '-', text)
@@ -666,7 +673,7 @@ def _prepare_upload_specs(
     specs: List[Tuple[Path, bool]] = []
     for source in file_paths:
         source_path = Path(source)
-        if source_path.suffix.lower() == '.txt':
+        if source_path.suffix.lower() in DIRECT_UPLOAD_EXTENSIONS:
             specs.append((source_path, False))
             continue
 
@@ -733,7 +740,7 @@ def _predict_upload_names(
     seen = set()
     for source in file_paths:
         source_path = Path(source)
-        if source_path.suffix.lower() == '.txt':
+        if source_path.suffix.lower() in DIRECT_UPLOAD_EXTENSIONS:
             name = _resolve_relative(source_path)
         else:
             name = _compute_temp_upload_name(prefix, source_path.stem, str(source_path))
@@ -1013,7 +1020,7 @@ def process_input_folder(folder_path):
                 pending_dirs.append(entry_path)
                 logger.debug(f"Encontrada subpasta para processamento: {entry_path}")
                 continue
-            if entry.is_file(follow_symlinks=False) and entry.name.endswith('.txt'):
+            if entry.is_file(follow_symlinks=False) and _is_supported_job_file(entry.name):
                 file_path = os.path.abspath(entry_path)
                 create_job(file_path, entry.name, current_dir)
 
@@ -1446,7 +1453,7 @@ async def run_stage3_cleanup():
 
 async def main():
     parser = argparse.ArgumentParser(description='Pipeline de extracao e geracao de conhecimento.')
-    parser.add_argument('--input', type=str, help='Caminho para uma pasta com arquivos .txt para processar.')
+    parser.add_argument('--input', type=str, help='Caminho para uma pasta com arquivos .txt ou .pdf para processar.')
     args = parser.parse_args()
 
     initialize_database()

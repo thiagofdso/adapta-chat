@@ -167,66 +167,81 @@ class AdaptaClientV2:
             logger.info("Login concluído com session_id=%s", self._session_id)
             return AuthResult(session_id=self._session_id, cookies=cookies)
 
-    async def chat_completion_stream(
+    async def call_model(
         self,
-        prompt: str,
-        *,
-        model: str = DEFAULT_MODEL,
-        files: Optional[List[Dict[str, Any]]] = None,
-        deep_research: bool = False,
-    ) -> AsyncGenerator[Tuple[str, str], None]:
-        """Executa uma chamada streaming retornando eventos (kind, texto).
-
-        kind:
-            - "thought": trechos classificados como pensamento/analysis.
-            - "answer": fragmentos incrementais da resposta.
-            - "answer_end": indicador de termino de um bloco de resposta.
-
-        Ative `deep_research=True` para requisitar a ferramenta deepResearch da API.
-        """
-        async for event_type, payload in self._chat_event_stream(
-            prompt,
-            model=model,
-            files=files,
-            include_tool_events=True,
-            deep_research=deep_research,
-        ):
-            if event_type in {"thought", "answer", "answer_end"}:
-                yield (event_type, payload)
-
-    async def chat_completion(
-        self,
-        prompt: str,
+        prompt: Optional[str] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
         *,
         model: str = DEFAULT_MODEL,
         files: Optional[List[Dict[str, Any]]] = None,
         ignore_thoughts: Optional[bool] = None,
-        deep_research: bool = False,
+        tools: Optional[List[str]] = None,
+        chat_id: Optional[str] = None,
+        isStream: bool = False,
         **kwargs: Any,
-    ) -> ChatCompletionResult:
-        """Executa a chamada agregada retornando os eventos em ordem.
+    ) -> Union[ChatCompletionResult, AsyncGenerator[Tuple[str, str], None]]:
+        """Executa uma chamada ao modelo nos modos agregado ou streaming.
 
-        Use `ignore_thoughts=True` (ou `ignoreThoughts=True`) para ocultar trechos
-        classificados como pensamento.
-        Utilize `deep_research=True` para acionar o fluxo de pesquisa aprofundada.
+        Quando `isStream=True`, retorna um gerador async emitindo eventos
+        incrementais (thought, answer, answer_end). Caso contrário, agrega a
+        resposta e devolve um `ChatCompletionResult`. Utilize
+        `ignore_thoughts=True` (ou `ignoreThoughts=True`) para ocultar
+        pensamentos no modo agregado. Utilize `tools` para indicar ferramentas
+        adicionais (cada item deve ser um dos valores aceitos pelo backend):
+
+            🔍 webSearch, webScrape, webCrawl, webSearchScientific, deepResearch
+            📄 documentGenerate, ragQuery, fullAnalysis
+            📊 analyzeSheet, generateSheet, tableFormatter
+            🎨 generateImage, editImage, analyzeImages, chartGeneration, generateDiagram
+            🎤 generatePPT, editPPT
+
+        Informe `messages` para enviar o histórico completo no formato aceito
+        pelo `BaseContentGenerator` (lista de dicionários com `role`, `content`
+        ou `parts`). Se omitido, preencha `prompt` com a mensagem única.
+        Passe `chat_id` quando quiser reutilizar um identificador específico;
+        caso não seja informado, um UUID v7 é gerado automaticamente.
         """
         if "ignoreThoughts" in kwargs:
             ignore_thoughts = kwargs.pop("ignoreThoughts")
         if kwargs:
             unexpected = ", ".join(kwargs.keys())
-            raise TypeError(f"chat_completion() recebeu argumentos inesperados: {unexpected}")
-        if ignore_thoughts is None:
-            ignore_thoughts = False
+            raise TypeError(f"call_model() recebeu argumentos inesperados: {unexpected}")
 
-        messages: List[Dict[str, str]] = []
+        if prompt is None and not messages:
+            raise ValueError("call_model() requer `prompt` ou `messages`.")
+
+        history_messages = messages
+
+        if isStream:
+            async def stream_generator() -> AsyncGenerator[Tuple[str, str], None]:
+                async for event_type, payload in self._chat_event_stream(
+                    prompt,
+                    messages=history_messages,
+                    model=model,
+                    files=files,
+                    include_tool_events=True,
+                    tools=tools,
+                    chat_id=chat_id,
+                ):
+                    if event_type in {"thought", "answer", "answer_end"}:
+                        yield (event_type, payload)
+
+            return stream_generator()
+
+        if ignore_thoughts is None:
+            ignore_thoughts = True
+
+        collected_messages: List[Dict[str, str]] = []
         current_answer_chunks: List[str] = []
 
         async for event_type, payload in self._chat_event_stream(
             prompt,
+            messages=history_messages,
             model=model,
             files=files,
             include_tool_events=True,
-            deep_research=deep_research,
+            tools=tools,
+            chat_id=chat_id,
         ):
             if event_type == "answer":
                 current_answer_chunks.append(payload)
@@ -235,22 +250,55 @@ class AdaptaClientV2:
             if event_type == "answer_end":
                 if current_answer_chunks:
                     answer_text = "".join(current_answer_chunks)
-                    messages.append({"kind": "answer", "text": answer_text})
+                    collected_messages.append({"kind": "answer", "text": answer_text})
                     current_answer_chunks = []
                 continue
 
-            if event_type == "thought":
-                if not ignore_thoughts:
-                    messages.append({"kind": "thought", "text": payload})
+            if event_type == "thought" and not ignore_thoughts:
+                collected_messages.append({"kind": "thought", "text": payload})
 
-        # Finaliza eventual resposta que não tenha recebido answer_end
         if current_answer_chunks:
             answer_text = "".join(current_answer_chunks)
-            messages.append({"kind": "answer", "text": answer_text})
+            collected_messages.append({"kind": "answer", "text": answer_text})
 
-        return ChatCompletionResult(messages=messages)
+        return ChatCompletionResult(messages=collected_messages)
 
-    async def delete_chats(self, chat_ids: List[str]) -> Dict[str, Any]:
+    async def _get_conversations(
+        self,
+        chat_id: str,
+        *,
+        page: int = 1,
+        limit: int = 40,
+    ) -> List[Dict[str, Any]]:
+        """Retorna o hist��rico de mensagens de um chat espec��fico."""
+        if not chat_id:
+            raise ValueError("chat_id �� obrigatorio para recuperar conversas.")
+
+        client = await self._ensure_client()
+        await self._ensure_authenticated()
+        token = await self._ensure_bearer_token()
+
+        url = f"{AGENT_BASE_URL}/api/chat/{chat_id}/v1"
+        headers = {
+            "accept": "*/*",
+            "authorization": f"Bearer {token}",
+            "origin": AGENT_BASE_URL,
+            "referer": f"{AGENT_BASE_URL}/agentic-chat/{chat_id}",
+        }
+        params = {"page": page, "limit": limit}
+
+        response = await client.get(url, headers=headers, params=params)
+        response.raise_for_status()
+
+        payload = response.json() or {}
+        data = payload.get("data") or {}
+        messages = data.get("messages") or []
+        if not isinstance(messages, list):
+            logger.warning("Resposta inesperada ao consultar conversas: %s", payload)
+            return []
+        return messages
+
+    async def _delete_conversations(self, chat_ids: List[str]) -> Dict[str, Any]:
         """Remove chats na plataforma Adapta.one."""
         if not chat_ids:
             return {"success": True, "data": None, "details": {"message": "Nenhum chatId informado."}}
@@ -277,7 +325,7 @@ class AdaptaClientV2:
         logger.debug("Resposta da exclusão de chats: %s", payload)
         return payload
 
-    async def upload_file(self, caminho_arquivo: str) -> Dict[str, Any]:
+    async def upload_arquivo(self, caminho_arquivo: str) -> Dict[str, Any]:
         """Realiza upload do arquivo e retorna metadados compatíveis com a API."""
         file_path = Path(caminho_arquivo)
         if not file_path.exists():
@@ -444,7 +492,7 @@ class AdaptaClientV2:
 
         return destination_path
 
-    async def delete_files(self, files_paths: List[str]) -> Dict[str, Any]:
+    async def excluir_arquivos(self, files_paths: List[str]) -> Dict[str, Any]:
         """Remove arquivos informados pela lista de caminhos no storage."""
         if not files_paths:
             return {
@@ -472,9 +520,9 @@ class AdaptaClientV2:
         response.raise_for_status()
         return response.json()
 
-    async def delete_file(self, file_path: str) -> Dict[str, Any]:
+    async def excluir_arquivo(self, file_path: str) -> Dict[str, Any]:
         """Atalho para excluir um unico arquivo."""
-        return await self.delete_files([file_path])
+        return await self.excluir_arquivos([file_path])
 
     def _extract_files_payload(self, payload: Any) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Normaliza o payload de listagem de arquivos retornado pela API."""
@@ -759,55 +807,45 @@ class AdaptaClientV2:
 
     async def _chat_event_stream(
         self,
-        prompt: str,
+        prompt: Optional[str],
         *,
+        messages: Optional[List[Dict[str, Any]]] = None,
         model: str,
         files: Optional[List[Dict[str, Any]]] = None,
         include_tool_events: bool,
-        deep_research: bool,
+        tools: Optional[List[str]],
+        chat_id: Optional[str] = None,
     ) -> AsyncGenerator[Tuple[str, str], None]:
         client = await self._ensure_client()
         await self._ensure_authenticated()
         token = await self._ensure_bearer_token()
 
-        chat_id = _generate_uuid7_like()
-        message_id = _generate_uuid7_like()
-        self._last_chat_id = chat_id
-        logger.info(f"Gerado chat_id={chat_id}  para nova requisicao de chat.")
+        chat_identifier = chat_id or _generate_uuid7_like()
+        #message_id = _generate_uuid7_like()
+        self._last_chat_id = chat_identifier
+        if chat_id:
+            logger.info(f"Reutilizando chat_id={chat_identifier} fornecido para nova requisicao de chat.")
+        else:
+            logger.info(f"Gerado chat_id={chat_identifier} para nova requisicao de chat.")
         #analytics_tasks = [
         #    asyncio.create_task(self._register_chat_view(chat_id)),
         #    asyncio.create_task(self._send_amplitude_event(chat_id, model)),
         #]
 
-        parts: List[Dict[str, Any]] = []
-        if files:
-            for file_info in files:
-                formatted = {
-                    "type": "file",
-                    "filename": file_info.get("filename"),
-                    "url": file_info.get("url"),
-                    "size": file_info.get("size"),
-                    "mediaType": file_info.get("mediaType"),
-                    "path": file_info.get("path"),
-                }
-                formatted = {k: v for k, v in formatted.items() if v is not None}
-                parts.append(formatted)
-        parts.append({"type": "text", "text": prompt})
+        payload_messages = self._prepare_messages_payload(
+            messages=messages,
+            prompt=prompt,
+            files=files,
+        )
 
         payload = {
-            "mandatoryTools": ["deepResearch"] if deep_research else [],
-            "chatId": chat_id,
+            "mandatoryTools": tools or [],
+            "chatId": chat_identifier,
             "contextsIds": [],
             "meetingContextsIds": [],
             "modelAi": model,
-            "id": chat_id,
-            "messages": [
-                {
-                    "role": "user",
-                    "parts": parts,
-                    "id": message_id,
-                }
-            ],
+            "id": chat_identifier,
+            "messages": payload_messages,
             "trigger": "submit-message",
         }
         headers = {
@@ -863,7 +901,10 @@ class AdaptaClientV2:
                         research_text = self._format_deep_research_output(output)
                         if research_text:
                             yield ("answer", research_text)
-                        continue
+
+                        plain_tool_text = self._extract_tool_text_output(output)
+                        if plain_tool_text:
+                            yield ("answer", plain_tool_text)
                         continue
 
                     if event_type == "text-delta":
@@ -885,6 +926,140 @@ class AdaptaClientV2:
             self._last_thought = "\n\n".join(thought_parts).strip()
         else:
             self._last_thought = None
+
+    def _prepare_messages_payload(
+        self,
+        *,
+        messages: Optional[List[Dict[str, Any]]],
+        prompt: Optional[str],
+        files: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        """Normaliza a estrutura de mensagens aceita pelo endpoint v2."""
+        if not messages:
+            if prompt is None:
+                raise ValueError("Não é possível construir mensagem padrão sem `prompt`.")
+            base_messages = self._prepare_user_message(prompt)
+            base_messages[-1]["parts"].extend(self._build_file_parts(files))
+            return base_messages
+
+        normalized: List[Dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role") or "user")
+            parts = message.get("parts")
+            if parts:
+                normalized_parts = self._normalize_parts(parts)
+            else:
+                normalized_parts = self._coerce_parts_from_content(message.get("content"))
+
+            if not normalized_parts:
+                normalized_parts = [{"type": "text", "text": ""}]
+
+            normalized.append({"role": role, "parts": normalized_parts})
+
+        file_parts = self._build_file_parts(files)
+        if file_parts:
+            target = next((msg for msg in normalized if msg.get("role") == "user"), None)
+            if target:
+                target["parts"] = file_parts + target.get("parts", [])
+            else:
+                normalized[0]["parts"] = file_parts + normalized[0].get("parts", [])
+
+        return normalized
+
+    def _build_default_parts(
+        self,
+        prompt: str,
+        files: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        parts = self._build_file_parts(files)
+        parts.append({"type": "text", "text": prompt})
+        return parts
+
+    def _prepare_user_message(
+        self,
+        prompt: str,
+        *,
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Cria uma mensagem de usuário com base em um prompt e concatena mensagens existentes."""
+        base_parts = [{"type": "text", "text": prompt}]
+        user_message = {
+            "role": "user",
+            "parts": base_parts,
+        }
+        if not messages:
+            return [user_message]
+
+        combined = list(messages)
+        combined.append(user_message)
+        return combined
+
+    def _build_file_parts(self, files: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        file_parts: List[Dict[str, Any]] = []
+        if not files:
+            return file_parts
+
+        for file_info in files:
+            formatted = {
+                "type": "file",
+                "filename": file_info.get("filename"),
+                "url": file_info.get("url"),
+                "size": file_info.get("size"),
+                "mediaType": file_info.get("mediaType"),
+                "path": file_info.get("path"),
+            }
+            formatted = {k: v for k, v in formatted.items() if v is not None}
+            if len(formatted) > 1:  # precisa de algo além de type
+                file_parts.append(formatted)
+        return file_parts
+
+    def _coerce_parts_from_content(self, content: Any) -> List[Dict[str, Any]]:
+        if isinstance(content, list):
+            return [part for part in (self._normalize_part(item) for item in content) if part]
+        if isinstance(content, str):
+            return [{"type": "text", "text": content}]
+        if content is None:
+            return []
+        return [{"type": "text", "text": str(content)}]
+
+    def _normalize_parts(self, parts: Any) -> List[Dict[str, Any]]:
+        if not isinstance(parts, list):
+            return self._coerce_parts_from_content(parts)
+        normalized = []
+        for part in parts:
+            formatted = self._normalize_part(part)
+            if formatted:
+                normalized.append(formatted)
+        return normalized
+
+    def _normalize_part(self, part: Any) -> Optional[Dict[str, Any]]:
+        if part is None:
+            return None
+        if isinstance(part, str):
+            return {"type": "text", "text": part}
+        if isinstance(part, dict):
+            part_type = part.get("type") or "text"
+            if part_type == "text":
+                text = part.get("text")
+                if text is None:
+                    return None
+                return {"type": "text", "text": str(text)}
+            if part_type == "file":
+                formatted = {
+                    "type": "file",
+                    "filename": part.get("filename"),
+                    "url": part.get("url"),
+                    "size": part.get("size"),
+                    "mediaType": part.get("mediaType"),
+                    "path": part.get("path"),
+                }
+                formatted = {k: v for k, v in formatted.items() if v is not None}
+                return formatted if len(formatted) > 1 else None
+            # fallback: manter chaves originais
+            cleaned = {k: v for k, v in part.items() if v is not None}
+            cleaned["type"] = part_type
+            return cleaned
+        return {"type": "text", "text": str(part)}
 
     def _format_table_output(self, table_payload: Dict[str, Any]) -> Optional[str]:
         """Converte a estrutura de tabela retornada pela API em markdown simples."""
@@ -978,6 +1153,24 @@ class AdaptaClientV2:
         if not combined.endswith("\n"):
             combined += "\n"
         return combined
+
+    def _extract_tool_text_output(self, output: Dict[str, Any]) -> Optional[str]:
+        """Extrai blocos de texto retornados diretamente por ferramentas."""
+        data = output.get("data")
+        if isinstance(data, str):
+            text = data.strip()
+            return text or None
+
+        if isinstance(data, dict):
+            candidates: List[str] = []
+            for key in ("text", "content", "body", "summary", "result"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    candidates.append(value.strip())
+            if candidates:
+                return "\n\n".join(candidates).join("\n\n")
+
+        return None
 
     def _format_research_list(self, value: Any) -> Optional[str]:
         """Converte listas ou strings genericas em marcadores."""
@@ -1230,12 +1423,14 @@ async def _main() -> None:
         print(f"Session ID: {result.session_id}")
         print(f"Cookies coletados: {masked}")
 
-        pergunta = "gere uma tabela comparando scrum e xp"
+        #pergunta = "gere uma tabela comparando scrum e xp"
+        pergunta = "pesquise na internet tecnicas para estudo de tabuada"
         chat_ids: List[str] = []
 
         print("\n--- Streaming em tempo real ---")
-        
-        async for kind, trecho in client.chat_completion_stream(pergunta):
+
+        stream = await client.call_model(prompt = pergunta, isStream=True)
+        async for kind, trecho in stream:
             if kind == "thought":
                 print("\n\n\nPensando...\n\n\n")
                 print(trecho, end='', flush=True)
@@ -1247,9 +1442,17 @@ async def _main() -> None:
             chat_ids.append(stream_chat_id)
             print(f"Chat ID (stream): {stream_chat_id}")
 
+        print("\n--- Resposta agregada (isStream=False) ---")
+
+        #aggregate = await client.call_model(pergunta, isStream=False)
+        #for message in aggregate.messages:
+        #    prefix = "[Pensamento]" if message["kind"] == "thought" else "[Resposta]"
+        #    print(prefix, message["text"])
+
         await client.logout()
         print("\nLogout concluido.")
 
 
 if __name__ == "__main__":
     asyncio.run(_main())
+

@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Any
 from pathlib import Path
 import uuid # <--- Added import
+import secrets
+import time
 
 
 class BaseContentGenerator(ABC):
@@ -168,12 +170,27 @@ class BaseContentGenerator(ABC):
         pass
     
     def generate_chat_id(self) -> str: # <--- Added method
-        """Gera um ID de chat aleatório no formato UUID4.
-        
-        Returns:
-            ID de chat aleatório formatado.
-        """
+        """Gera um ID de chat aleatório no formato UUID4."""
         return str(uuid.uuid4())
+
+    def generate_chat_id_v2(self) -> str:
+        """Gera um ID de chat compatível com UUIDv7 para manter ordenação temporal."""
+        uuid7_factory = getattr(uuid, "uuid7", None)
+        if callable(uuid7_factory):
+            return str(uuid7_factory())
+
+        timestamp_ms = int(time.time() * 1000) & ((1 << 48) - 1)
+        rand_a = secrets.randbits(12)
+        rand_b = secrets.randbits(62)
+
+        uuid_int = (timestamp_ms << 80)
+        uuid_int |= 0x7 << 76
+        uuid_int |= rand_a << 64
+        uuid_int |= 0x2 << 62
+        uuid_int |= rand_b
+
+        return str(uuid.UUID(int=uuid_int))
+
 
     @abstractmethod
     async def health_check(self) -> bool:
