@@ -24,17 +24,20 @@ The user interacts with the system via web interfaces built with Streamlit. Thes
 - **`base.py`:** Defines the `BaseContentGenerator` abstract class. This class enforces a contract that all specific generator implementations must follow (e.g., must have a `call_model_with_messages` method).
 - **`*_generator.py` files:** These are concrete implementations (`ClaudeOpusGenerator`, `GeminiGenerator`, `ClaudeGenerator`, `GPTGenerator`, `DeepseekGenerator`, `Grok4Generator`, `GptOssGenerator`, `DeepseekR1Generator`, `GptO3Generator`, `GptO4MiniGenerator`). They inherit from `BaseContentGenerator` and use the `AdaptaClient` to perform their tasks. This design makes it easy to add new AI models in the future.
 
-### 2.4. User Interfaces (`src/app_*.py`)
+### 2.4. Next-gen Generator Stack (`src/generators_v2/`)
+- **Purpose:** Mirrors the legacy structure but is wired to the experimental `AdaptaClientV2`, which natively handles login/password flows, SSE streaming and richer tool orchestration.
+- **Details:** `generators_v2/base.py` houses the refreshed `BaseContentGenerator` that normalizes tool mappings (e.g., `searchType` → `webSearch`) and attachments for the new API. The `adapta/` subpackage contains `client.py` plus lightweight model wrappers (Claude, Claude Opus, Gemini, GPT, Deepseek, Grok-4, GPT-OSS, O3, O4-Mini, Deepseek-R1) that simply declare their `MODEL_NAME` while inheriting the shared behavior.
+- **Usage:** This tree allows us to onboard the v2 client without disturbing the existing generators. Pipeline/App callers can migrate gradually by switching imports from `generators` to `generators_v2`.
+
+### 2.5. User Interfaces (`src/app_*.py`)
 - **Purpose:** To provide interactive web interfaces for the user.
 - **Technology:** Built with Streamlit.
 - **`app_chat.py`:** A simple, single-thread chat application for direct conversation with a chosen AI model. It now includes internet search capabilities (Google, Scientific, Deep Research) for enhancing AI responses.
 - **`app_debate.py`:** A complex, multi-agent simulation application. It orchestrates a debate between several AI agents to collaboratively solve a problem, running the agents in parallel for each round of debate. It now features optional internet access (Google search) for all agents.
 
-### 2.5. Knowledge Pipeline Components
-- **Purpose:** To provide a multi-stage, fault-tolerant pipeline for extracting and generating knowledge from text files.
-- **src/pipeline.py:** Orchestrates the three pipeline stages. It consolidates the source .txt files (limit de 400k palavras por upload), tenta gerar os patches JSON alternando entre ClaudeOpusGenerator, GPTGenerator e GeminiGenerator, e mantem um indice JSON particionado por pasta (indexes/<slug>_part_001.json, ..._part_002.json, etc.) junto com o manifesto agregado (indexes/<slug>.json). As saídas do Stage 2 são gravadas em diretórios `docs_<raiz>` que preservam a hierarquia das subpastas de origem com slugs normalizados. Cada knowledge registra a lista de arquivos (iles) e os IDs de conhecimentos relacionados (knowledge_related).
-iles) e os IDs de conhecimentos relacionados (knowledge_related).
-iles) e os IDs de conhecimentos relacionados (knowledge_related).
+### 2.6. Knowledge Pipeline Components
+- **Purpose:** To provide a multi-stage, fault-tolerant pipeline for extracting and generating knowledge from text and PDF files.
+- **src/pipeline.py:** Orchestrates the three pipeline stages. Ele consolida arquivos-fonte `.txt` (limit de 400k palavras por upload) e anexa PDFs diretamente via cliente da Adapta, sem leitura local, antes de gerar os patches JSON alternando entre ClaudeOpusGenerator, GPTGenerator e GeminiGenerator. Mantém um índice JSON particionado por pasta (indexes/<slug>_part_001.json, ..._part_002.json, etc.) e o manifesto agregado (indexes/<slug>.json). As saídas do Stage 2 são gravadas em diretórios `docs_<raiz>` que preservam a hierarquia das subpastas de origem com slugs normalizados, e cada knowledge registra a lista de arquivos (files) e IDs de conhecimentos relacionados (knowledge_related).
 - **`src/prompt_manager.py`:** Generates the extraction prompt. When an index already exists, todos os arquivos particionados sao listados no prompt (somente pelos nomes) juntamente com regras extras (continuar o catalogo, permitir insercao de novas secoes, preservar arquivos e relacionamentos) antes de chamar o LLM.
 - **src/prompt_manager.py:** Generates the extraction prompt. When an index already exists, todos os arquivos particionados sao listados no prompt (somente pelos nomes) juntamente com regras extras (continuar o catalogo, permitir insercao de novas secoes, preservar arquivos e relacionamentos) antes de chamar o LLM.
 - **src/prompt_manager.py:** Generates the extraction prompt. When an index already exists, todos os arquivos particionados sao listados no prompt (somente pelos nomes) juntamente com regras extras (continuar o catalogo, permitir insercao de novas secoes, preservar arquivos e relacionamentos) antes de chamar o LLM.
@@ -67,6 +70,13 @@ iles) e os IDs de conhecimentos relacionados (knowledge_related).
 ¦   ¦   +-- adapta/
 ¦   ¦       +-- __init__.py
 ¦   ¦       +-- client.py        # The Adapta.one API client (plus generator wrappers).
+¦   +-- generators_v2/
+¦   ¦   +-- __init__.py
+¦   ¦   +-- base.py              # Refined base tuned for AdaptaClientV2/tooling.
+¦   ¦   +-- adapta/
+¦   ¦       +-- __init__.py
+¦   ¦       +-- client.py        # Experimental Adapta client with login/password flow.
+¦   ¦       +-- claude_generator.py, ...  # Model wrappers inheriting from the new base.
 ¦   +-- prompts/
 ¦   ¦   +-- knowledge_creation.txt
 ¦   ¦   +-- knowledge_extraction.txt

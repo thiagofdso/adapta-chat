@@ -5,7 +5,7 @@ This document outlines the functional requirements of the Adapta-Chat project.
 ## Core System
 
 - **FR-001: User Authentication Configuration:** The system must allow users to configure their Adapta.one credentials (cookies, session ID) via a `.env` file for API access.
-- **FR-002: Multi-Model Support:** The system must support an expanded list of AI models (Gemini, Claude, GPT, Claude Opus, Deepseek, Grok-4, GPT-OSS, Deepseek-R1, O3, O4-Mini) through a common, abstract generator interface.
+- **FR-002: Multi-Model Support:** The system must support an expanded list of AI models (Gemini, Claude, GPT, Claude Opus, Deepseek, Grok-4, GPT-OSS, Deepseek-R1, O3, O4-Mini) through a common, abstract generator interface. A parallel `generators_v2` package must mirror this structure so that the newer `AdaptaClientV2` can replace the legacy client transparently.
 - **FR-003: Asynchronous API Communication:** All communication with the external Adapta.one API must be handled asynchronously to ensure efficient, non-blocking operations.
 - **FR-004: Response Cleaning:** Responses from Gemini-based models must be automatically processed to remove non-content tags (e.g., `<thinking>`) before being displayed to the user.
 
@@ -33,9 +33,9 @@ This document outlines the functional requirements of the Adapta-Chat project.
 
 ## Knowledge Pipeline (`pipeline.py`)
 
-- **FR-021: Dual-Mode Operation:** The pipeline must operate in two modes: (1) by processing a specified input folder (`--input`) to discover and register new text files, or (2) if no input is given, by processing items that are already pending in the database.
+- **FR-021: Dual-Mode Operation:** The pipeline must operate in two modes: (1) by processing a specified input folder (`--input`) to discover and register new source files (`.txt` and `.pdf`), or (2) if no input is given, by processing items that are already pending in the database.
 - **FR-022: Job Registration and State Management:** The system must use a SQLite database to create and manage the state of all processing jobs and individual knowledge items, tracking their progress through stages (e.g., indexing, generation, complete) and statuses (e.g., pending, in-progress, completed, error).
-- **FR-023: Knowledge Indexing:** For each new file, the system must use the Gemini model to generate a JSON index of all granular knowledge pieces contained within the text.
+- **FR-023: Knowledge Indexing:** For each new file, the system must use the Gemini model to generate a JSON index of all granular knowledge pieces contained within the text, anexando PDFs diretamente (sem conversão local) para que o modelo processe o conteúdo original.
 - **FR-024: Dynamic De-duplication:** To prevent duplicate entries, the indexing prompt must be dynamically updated with a list of all knowledges that have already been extracted from other files in the same source folder.
 - **FR-029: Index Partitioning:** The knowledge index must be persisted em arquivos fracionados com no maximo 300 registros cada (indexes/<slug>_part_XXX.json) e cada parte deve ser enviada individualmente como anexo nas requisicoes de JSON Patch.
 - **FR-025: Knowledge Persistence:** Each knowledge piece from the generated JSON index must be saved as a distinct record in the database with a "pending" status, linked to its parent job.

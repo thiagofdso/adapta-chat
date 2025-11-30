@@ -1,5 +1,2 @@
-1. Introducao
-
-2. Desenvolvimento
-
-3. Conclusao
+Conteudo de teste para Adapta.
+Linha 2.

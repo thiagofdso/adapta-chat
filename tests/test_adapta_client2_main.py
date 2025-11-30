@@ -9,7 +9,7 @@ from unittest import IsolatedAsyncioTestCase, skipIf
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from config import settings  # noqa: E402
-from generators.adapta.client2 import AdaptaClientV2  # noqa: E402
+from generators_v2.adapta.client import AdaptaClientV2  # noqa: E402
 
 
 def _has_valid_credentials() -> bool:
@@ -65,7 +65,7 @@ class TestAdaptaClient2MainFlow(IsolatedAsyncioTestCase):
 
                 if local_file.exists():
                     try:
-                        uploaded = await client.upload_file(str(local_file))
+                        uploaded = await client.upload_arquivo(str(local_file))
                         uploaded_path = uploaded.get("path") if isinstance(uploaded, dict) else None
                         print(f"Upload concluido para {uploaded_path}")
                     except Exception as exc:
@@ -79,7 +79,8 @@ class TestAdaptaClient2MainFlow(IsolatedAsyncioTestCase):
                 print("\n--- Streaming em tempo real ---")
 
                 try:
-                    async for kind, trecho in client.chat_completion_stream(pergunta, files=[uploaded]):
+                    stream = await client.call_model(pergunta, files=[uploaded], isStream=True)
+                    async for kind, trecho in stream:
                         events.append((kind, trecho))
                         if kind == "thought":
                             print("\n\n\nPensando...\n\n\n")
@@ -88,7 +89,7 @@ class TestAdaptaClient2MainFlow(IsolatedAsyncioTestCase):
                         elif kind == "answer":
                             print(trecho, end="", flush=True)
                 except Exception as exc:
-                        self.fail(f"Falha durante o streaming de chat: {exc}")
+                    self.fail(f"Falha durante o streaming de chat: {exc}")
 
                 stream_chat_id = client.last_chat_id
                 if stream_chat_id:
@@ -97,7 +98,7 @@ class TestAdaptaClient2MainFlow(IsolatedAsyncioTestCase):
 
                 if uploaded_path:
                     try:
-                        removal_response = await client.delete_file(uploaded_path)
+                        removal_response = await client.excluir_arquivo(uploaded_path)
                         print(f"\nArquivo remoto teste.txt removido: {removal_response}")
                     except Exception as exc:
                         self.fail(f"Nao foi possivel remover teste.txt: {exc}")

@@ -2,30 +2,30 @@
 
 from .base import BaseContentGenerator
 from .adapta.client import AdaptaClientV2, AuthResult, ChatCompletionResult
-from .adapta.claude_generator import ClaudeGenerator
-from .adapta.claude_opus_generator import ClaudeOpusGenerator
-from .adapta.deepseek_generator import DeepseekGenerator
-from .adapta.deepseek_r1_generator import DeepseekR1Generator
-from .adapta.gemini_generator import GeminiGenerator
-from .adapta.gpt_generator import GPTGenerator
-from .adapta.gpt_o3_generator import GptO3Generator
-from .adapta.gpt_o4_mini_generator import GptO4MiniGenerator
-from .adapta.gpt_oss_generator import GptOssGenerator
-from .adapta.grok_4_generator import Grok4Generator
+from .adapta.claude_45_sonnet_generator import Claude45SonnetGenerator
+from .adapta.deepseek_v3_generator import DeepseekV3Generator
+from .adapta.gemini_3_pro_preview_generator import Gemini3ProPreviewGenerator
+from .adapta.gpt_5_generator import GPT5Generator
+from .adapta.gpt_51_generator import GPT51Generator
+from .adapta.grok_41_generator import Grok41Generator
+from .adapta.o3_generator import O3Generator
+from .adapta.one_pro_generator import OneProGenerator
+from .adapta.qwen3_max_generator import Qwen3MaxGenerator
+from .adapta.sonar_pro_generator import SonarProGenerator
 
 __all__ = [
     "BaseContentGenerator",
     "AdaptaClientV2",
     "AuthResult",
     "ChatCompletionResult",
-    "ClaudeGenerator",
-    "ClaudeOpusGenerator",
-    "DeepseekGenerator",
-    "DeepseekR1Generator",
-    "GeminiGenerator",
-    "GPTGenerator",
-    "GptO3Generator",
-    "GptO4MiniGenerator",
-    "GptOssGenerator",
-    "Grok4Generator",
+    "Claude45SonnetGenerator",
+    "DeepseekV3Generator",
+    "Gemini3ProPreviewGenerator",
+    "GPT5Generator",
+    "GPT51Generator",
+    "Grok41Generator",
+    "O3Generator",
+    "OneProGenerator",
+    "Qwen3MaxGenerator",
+    "SonarProGenerator",
 ]

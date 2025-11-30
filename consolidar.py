@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
 import os
 import sys
-import glob
 from pathlib import Path
+
+EXTENSOES_SUPORTADAS = {".txt", ".md"}
+
+
+def listar_arquivos_suportados(pasta_origem):
+    """Retorna uma lista ordenada de arquivos suportados, incluindo subpastas."""
+    base_path = Path(pasta_origem)
+    arquivos = [
+        str(path)
+        for path in base_path.rglob("*")
+        if path.is_file() and path.suffix.lower() in EXTENSOES_SUPORTADAS
+    ]
+    return sorted(arquivos)
 
 def contar_palavras(texto):
     """Conta o número de palavras em um texto."""
@@ -28,7 +40,7 @@ Linhas: {linhas}
     return estrutura
 
 def processar_pasta(pasta_origem):
-    """Processa todos os arquivos .txt da pasta e gera arquivos consolidados."""
+    """Processa arquivos suportados (.txt e .md) da pasta, incluindo subpastas."""
     
     # Verifica se a pasta existe
     if not os.path.isdir(pasta_origem):
@@ -38,15 +50,17 @@ def processar_pasta(pasta_origem):
     # Nome base para os arquivos de saída (nome da pasta)
     nome_pasta = os.path.basename(os.path.abspath(pasta_origem))
     
-    # Lista todos os arquivos .txt da pasta
-    arquivos_txt = glob.glob(os.path.join(pasta_origem, "*.txt"))
-    
-    if not arquivos_txt:
-        print(f"Nenhum arquivo .txt encontrado na pasta '{pasta_origem}'.")
+    # Lista todos os arquivos suportados na pasta e subpastas
+    arquivos_suportados = listar_arquivos_suportados(pasta_origem)
+
+    if not arquivos_suportados:
+        print(
+            f"Nenhum arquivo suportado (.txt ou .md) encontrado na pasta '{pasta_origem}'."
+        )
         return
-    
+
     # Ordena os arquivos para processamento consistente
-    arquivos_txt.sort()
+    arquivos_suportados.sort()
     
     # Variáveis de controle
     contador_arquivo = 1
@@ -54,9 +68,12 @@ def processar_pasta(pasta_origem):
     palavras_atual = 0
     max_palavras = 300000
     
-    print(f"Processando {len(arquivos_txt)} arquivos .txt da pasta '{pasta_origem}'...")
-    
-    for arquivo_path in arquivos_txt:
+    print(
+        f"Processando {len(arquivos_suportados)} arquivos (.txt/.md) da pasta "
+        f"'{pasta_origem}' e subpastas..."
+    )
+
+    for arquivo_path in arquivos_suportados:
         try:
             # Lê o conteúdo do arquivo
             with open(arquivo_path, 'r', encoding='utf-8') as f:
