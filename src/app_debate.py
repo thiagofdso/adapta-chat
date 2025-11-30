@@ -1,40 +1,71 @@
 import streamlit as st
 import asyncio
+import sys
 import os
 import nest_asyncio
 from itertools import cycle
 from utils.text_cleaner import remove_think_tags
-from generators.adapta import (
-    GeminiGenerator, ClaudeGenerator, GPTGenerator, ClaudeOpusGenerator,
-    DeepseekGenerator, Grok4Generator, GptOssGenerator, DeepseekR1Generator,
-    GptO3Generator, GptO4MiniGenerator
+from generators_v2 import (
+    AdaptaClientV2,
+    Claude45SonnetGenerator,
+    DeepseekV3Generator,
+    Gemini3ProPreviewGenerator,
+    GPT5Generator,
+    GPT51Generator,
+    Grok41Generator,
+    O3Generator,
+    OneProGenerator,
+    Qwen3MaxGenerator,
+    SonarProGenerator,
 )
 from utils.logger import logger
 
+# Em Windows, usar SelectorEventLoop evita bugs do Proactor com anyio/httpx.
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 nest_asyncio.apply()
 
-def run_agent_call_sync(agent_instance, messages):
-    """Wrapper to run async agent call in a new event loop."""
-    return asyncio.run(agent_instance.call_model_with_messages(messages))
+
+def get_shared_loop():
+    """Return a single event loop reused across the app to avoid httpx loop mismatch."""
+    if "shared_loop" not in st.session_state:
+        st.session_state.shared_loop = asyncio.new_event_loop()
+    loop = st.session_state.shared_loop
+    asyncio.set_event_loop(loop)
+    return loop
+
+
+def run_agent_call_sync(agent_instance, messages, chat_id=None):
+    """Wrapper to run async agent call on the shared event loop."""
+    loop = get_shared_loop()
+    asyncio.set_event_loop(loop)
+    return loop.run_until_complete(agent_instance.call_model_with_messages(messages, chat_id=chat_id))
 
 # --- App Configuration ---
 st.set_page_config(page_title="Multi-Agent Debate Chat", layout="wide")
 
 # --- Agent Initialization ---
 @st.cache_resource
+def get_shared_client() -> AdaptaClientV2:
+    return AdaptaClientV2()
+
+
+@st.cache_resource
 def initialize_base_generators():
-    """Initializes the base generator models. This runs only once."""
+    """Initializes the base generator models (v2) sharing a single client."""
+    client = get_shared_client()
     return {
-        "Gemini": GeminiGenerator(),
-        "Claude": ClaudeGenerator(),
-        "GPT": GPTGenerator(),
-        "Claude Opus": ClaudeOpusGenerator(),
-        "Deepseek": DeepseekGenerator(),
-        "Grok-4": Grok4Generator(),
-        "GPT-OSS": GptOssGenerator(),
-        "Deepseek-R1": DeepseekR1Generator(),
-        "O3": GptO3Generator(),
-        "O4-Mini": GptO4MiniGenerator(),
+        "Claude 4.5 Sonnet": Claude45SonnetGenerator(client=client),
+        "Gemini 3 Pro Preview": Gemini3ProPreviewGenerator(client=client),
+        "GPT-5": GPT5Generator(client=client),
+        "GPT-5.1": GPT51Generator(client=client),
+        "Deepseek V3": DeepseekV3Generator(client=client),
+        "Grok 4.1": Grok41Generator(client=client),
+        "Qwen3 Max": Qwen3MaxGenerator(client=client),
+        "One Pro": OneProGenerator(client=client),
+        "O3": O3Generator(client=client),
+        "Sonar Pro": SonarProGenerator(client=client),
     }
 
 # --- Helper Functions ---
@@ -138,6 +169,14 @@ def main():
         st.session_state.agent_selected_models = loaded_model_config
     if "final_conclusion" not in st.session_state:
         st.session_state.final_conclusion = None
+    if "agent_chat_ids" not in st.session_state:
+        st.session_state.agent_chat_ids = {}
+    if "manager_chat_id" not in st.session_state:
+        st.session_state.manager_chat_id = None
+    if "auth_done" not in st.session_state:
+        st.session_state.auth_done = False
+    if "shared_loop" not in st.session_state:
+        st.session_state.shared_loop = asyncio.new_event_loop()
         
     if "debate_started" not in st.session_state:
         st.session_state.debate_started = False
@@ -153,13 +192,25 @@ def main():
 
     base_generators = initialize_base_generators()
 
+    async def ensure_shared_login() -> None:
+        """Garante login do client compartilhado apenas uma vez."""
+        if st.session_state.auth_done:
+            return
+        client = get_shared_client()
+        try:
+            await client.simulate_login()
+            st.session_state.auth_done = True
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Falha ao autenticar client compartilhado: %s", exc)
+            raise
+
     # --- UI Rendering ---
     if not st.session_state.debate_started:
         # --- Setup View ---
         st.sidebar.header("Debate Setup")
         st.session_state.num_agents = st.sidebar.number_input("Number of Agents", min_value=2, max_value=10, value=3)
         st.session_state.num_rounds = st.sidebar.number_input("Number of Debate Rounds", min_value=1, max_value=10, value=3)
-        st.session_state.internet_access = st.sidebar.checkbox("Enable Internet Access (Google)")
+        # internet access removido no v2
         
         # --- Custom Prompts UI ---
         st.sidebar.subheader("Customize Agent Prompts")
@@ -191,11 +242,23 @@ def main():
                     index=available_model_names.index(default_model) if default_model in available_model_names else 0,
                     key=f"model_select_{agent_name}"
                 )
-        
-        st.session_state.initial_problem = st.text_area("Enter the problem or topic to be debated:", height=200)
+
+        st.session_state.initial_problem = st.text_area(
+            "Enter the problem or topic to be debated:",
+            height=200,
+            key="initial_problem_input_main",
+        )
 
         if st.button("Start Debate"):
             if st.session_state.initial_problem:
+                # login único antes de iniciar
+                try:
+                    loop = get_shared_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(ensure_shared_login())
+                except Exception:
+                    st.error("Falha ao autenticar. Verifique as credenciais do Adapta.")
+                    return
                 # --- Save Custom Prompts and Model Config ---
                 current_model_config = {}
                 for i in range(st.session_state.num_agents):
@@ -210,21 +273,21 @@ def main():
                 # --- Initialize Debate State ---
                 st.session_state.debate_started = True
                 st.session_state.current_round = 1
-                st.session_state.manager_agent = GeminiGenerator() # Manager always Gemini
+                st.session_state.manager_agent = Gemini3ProPreviewGenerator(client=get_shared_client())  # Manager with v2
                 
                 # Assign models to worker agents based on selection or rotation
                 st.session_state.worker_agents = {}
                 available_models = cycle([
-                    ("GPT", base_generators["GPT"]),
-                    ("Gemini", base_generators["Gemini"]),
-                    ("Claude", base_generators["Claude"]),
-                    ("Claude Opus", base_generators["Claude Opus"]),
-                    ("Deepseek", base_generators["Deepseek"]),
-                    ("Grok-4", base_generators["Grok-4"]),
-                    ("GPT-OSS", base_generators["GPT-OSS"]),
-                    ("Deepseek-R1", base_generators["Deepseek-R1"]),
+                    ("Claude 4.5 Sonnet", base_generators["Claude 4.5 Sonnet"]),
+                    ("Gemini 3 Pro Preview", base_generators["Gemini 3 Pro Preview"]),
+                    ("GPT-5", base_generators["GPT-5"]),
+                    ("GPT-5.1", base_generators["GPT-5.1"]),
+                    ("Deepseek V3", base_generators["Deepseek V3"]),
+                    ("Grok 4.1", base_generators["Grok 4.1"]),
+                    ("Qwen3 Max", base_generators["Qwen3 Max"]),
+                    ("One Pro", base_generators["One Pro"]),
                     ("O3", base_generators["O3"]),
-                    ("O4-Mini", base_generators["O4-Mini"]),
+                    ("Sonar Pro", base_generators["Sonar Pro"]),
                 ])
                 for i in range(st.session_state.num_agents):
                     agent_name = f"Agent {i+1}"
@@ -238,6 +301,15 @@ def main():
                 
                 st.session_state.agent_memories = {name: "" for name in st.session_state.worker_agents}
                 st.session_state.conversation_histories = {name: [] for name in st.session_state.worker_agents}
+                st.session_state.agent_chat_ids = {
+                    name: agent_instance.generate_chat_id() if hasattr(agent_instance, "generate_chat_id") else None
+                    for name, (_, agent_instance) in st.session_state.worker_agents.items()
+                }
+                st.session_state.manager_chat_id = (
+                    st.session_state.manager_agent.generate_chat_id()
+                    if hasattr(st.session_state.manager_agent, "generate_chat_id")
+                    else None
+                )
                 st.rerun()
             else:
                 st.warning("Please enter a problem or topic.")
@@ -260,7 +332,8 @@ def main():
         async def run_debate_round():
             tasks = []
             previous_memories = st.session_state.agent_memories.copy()
-            search_type = "normal" if st.session_state.internet_access else None
+
+            await ensure_shared_login()
 
             for agent_name, (model_name, agent_instance) in st.session_state.worker_agents.items():
                 other_agents_memories = {name: mem for name, mem in previous_memories.items() if name != agent_name}
@@ -279,7 +352,7 @@ def main():
                 # Create a coroutine for the API call
                 task = agent_instance.call_model_with_messages(
                     st.session_state.conversation_histories[agent_name],
-                    searchType=search_type
+                    chat_id=st.session_state.agent_chat_ids.get(agent_name),
                 )
                 tasks.append(task)
             
@@ -289,7 +362,9 @@ def main():
 
         # --- Execute the round and display results ---
         with st.spinner(f"Round {st.session_state.current_round} in progress... Agents are thinking..."):
-            all_responses = asyncio.run(run_debate_round())
+            loop = get_shared_loop()
+            asyncio.set_event_loop(loop)
+            all_responses = loop.run_until_complete(run_debate_round())
         agent_columns = st.columns(st.session_state.num_agents)
 
         for i, (agent_name, response) in enumerate(zip(st.session_state.worker_agents.keys(), all_responses)):
@@ -332,7 +407,8 @@ def main():
                     try:
                         final_conclusion_text = run_agent_call_sync(
                             st.session_state.manager_agent,
-                            manager_history
+                            manager_history,
+                            chat_id=st.session_state.manager_chat_id,
                         )
                         if final_conclusion_text:
                             st.session_state.final_conclusion = remove_think_tags(final_conclusion_text)
@@ -365,6 +441,20 @@ def main():
                             with open("debate.md", "w", encoding="utf-8") as f:
                                 f.write(md_content)
                             st.success("Results successfully saved to `debate.md`!")
+                            # Limpeza de chats remotos
+                            try:
+                                client = get_shared_client()
+                                ids_para_remover = list(st.session_state.agent_chat_ids.values()) + [st.session_state.manager_chat_id]
+                                ids_para_remover = [cid for cid in ids_para_remover if cid]
+                                if ids_para_remover:
+                                    loop = get_shared_loop()
+                                    asyncio.set_event_loop(loop)
+                                    loop.run_until_complete(client.excluir_chat(ids_para_remover))
+                                    logger.info("Chats removidos ao final do debate: %s", ids_para_remover)
+                                st.session_state.agent_chat_ids = {}
+                                st.session_state.manager_chat_id = None
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning("Falha ao remover chats ao final do debate: %s", exc)
 
                     except Exception as e:
                         error_msg = f"Could not generate or save final conclusion: {e}"

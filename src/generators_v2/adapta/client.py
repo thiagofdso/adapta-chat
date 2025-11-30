@@ -263,6 +263,75 @@ class AdaptaClientV2:
 
         return ChatCompletionResult(messages=collected_messages)
 
+    async def call_message_openai(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        stream: bool = False,
+        files: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[str]] = None,
+        **_: Any,
+    ) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
+        """Recebe mensagens no formato da API OpenAI e retorna no mesmo padr��o.
+
+        Campos ausentes (tokens, logprobs etc.) s��o preenchidos com valores
+        simulados para manter compatibilidade com o contrato esperado.
+        """
+        if not messages:
+            raise ValueError("call_message_openai requer a lista `messages` no formato da OpenAI.")
+
+        selected_model = model or DEFAULT_MODEL
+        normalized_messages = self._convert_openai_messages(messages)
+
+        if stream:
+            raw_stream = await self.call_model(
+                prompt=None,
+                messages=normalized_messages,
+                model=selected_model,
+                files=files,
+                tools=tools,
+                isStream=True,
+                ignore_thoughts=True,
+            )
+            completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+            created = int(time.time())
+
+            async def _openai_stream_wrapper() -> AsyncGenerator[Dict[str, Any], None]:
+                async for event_type, payload in raw_stream:
+                    if event_type != "answer" and event_type != "answer_end":
+                        continue
+                    finish_reason = "stop" if event_type == "answer_end" else None
+                    delta_content = "" if event_type == "answer_end" else payload
+                    yield {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": selected_model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": delta_content} if delta_content else {},
+                                "logprobs": None,
+                                "finish_reason": finish_reason,
+                            }
+                        ],
+                    }
+
+            return _openai_stream_wrapper()
+
+        chat_result = await self.call_model(
+            prompt=None,
+            messages=normalized_messages,
+            model=selected_model,
+            files=files,
+            tools=tools,
+            isStream=False,
+            ignore_thoughts=True,
+        )
+        answer_text = self._extract_answer_text(chat_result)
+        return self._build_openai_response(answer_text, selected_model)
+
     async def _get_conversations(
         self,
         chat_id: str,
@@ -325,6 +394,16 @@ class AdaptaClientV2:
         logger.debug("Resposta da exclusão de chats: %s", payload)
         return payload
 
+    async def excluir_chat(self, chat_ids: Union[str, List[str]]) -> Dict[str, Any]:
+        """Remove um ou mais chats, espelhando o endpoint /api/chat/delete/v1."""
+        if isinstance(chat_ids, str):
+            chat_ids = [chat_ids]
+        elif not isinstance(chat_ids, list):
+            raise TypeError("excluir_chat aceita uma string ou lista de strings.")
+
+        normalized = [cid for cid in (chat_ids or []) if cid]
+        return await self._delete_conversations(normalized)
+
     async def upload_arquivo(self, caminho_arquivo: str) -> Dict[str, Any]:
         """Realiza upload do arquivo e retorna metadados compatíveis com a API."""
         file_path = Path(caminho_arquivo)
@@ -372,6 +451,14 @@ class AdaptaClientV2:
             upload_info = raw_data[0]
         else:
             raise RuntimeError(f"Resposta inesperada do endpoint de upload: {payload}")
+
+        # Alguns endpoints devolvem {"files": [ { ... } ], "currentStorage": ...}
+        # nesse caso devemos desembrulhar o primeiro item da lista.
+        if isinstance(upload_info, dict) and "files" in upload_info and isinstance(upload_info["files"], list):
+            if upload_info["files"]:
+                upload_info = upload_info["files"][0]
+            else:
+                raise RuntimeError(f"Lista de arquivos vazia no payload de upload: {payload}")
 
         if not isinstance(upload_info, dict):
             raise RuntimeError(f"Formato invalido nos dados de upload: {upload_info}")
@@ -804,6 +891,93 @@ class AdaptaClientV2:
 
     def _token_expired(self) -> bool:
         return time.time() >= self._bearer_token_exp
+
+    def _convert_openai_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Adapta a lista de mensagens no formato OpenAI para o formato interno."""
+        normalized: List[Dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role") or "user")
+            content = message.get("content")
+
+            # Suporta conte��do como string ou lista de blocos (OpenAI v2).
+            payload: Dict[str, Any] = {"role": role}
+            if isinstance(content, list):
+                payload["content"] = content
+            elif content is None:
+                payload["content"] = ""
+            else:
+                payload["content"] = str(content)
+
+            normalized.append(payload)
+        return normalized
+
+    def _extract_answer_text(self, result: Any) -> str:
+        """Extrai o texto da resposta agregada retornada por call_model."""
+        if result is None:
+            return ""
+
+        messages = getattr(result, "messages", None)
+        if isinstance(messages, list):
+            answers = [
+                entry.get("text", "")
+                for entry in messages
+                if isinstance(entry, dict) and entry.get("kind") == "answer"
+            ]
+            if any(chunk.strip() for chunk in answers):
+                return "".join(answers)
+
+            fallbacks = [
+                entry.get("text", "")
+                for entry in messages
+                if isinstance(entry, dict) and entry.get("text")
+            ]
+            if fallbacks:
+                return "".join(fallbacks)
+
+        return str(result)
+
+    def _build_openai_response(self, answer_text: str, model: str) -> Dict[str, Any]:
+        """Monta a resposta no padr��o da OpenAI usando dados locais."""
+        created_ts = int(time.time())
+        completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+        completion_tokens = len(answer_text.split()) if answer_text else 0
+        prompt_tokens = 0
+
+        return {
+            "id": completion_id,
+            "object": "chat.completion",
+            "created": created_ts,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": answer_text,
+                        "refusal": None,
+                        "annotations": [],
+                    },
+                    "logprobs": None,
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+                "prompt_tokens_details": {
+                    "cached_tokens": 0,
+                    "audio_tokens": 0,
+                },
+                "completion_tokens_details": {
+                    "reasoning_tokens": 0,
+                    "audio_tokens": 0,
+                    "accepted_prediction_tokens": 0,
+                    "rejected_prediction_tokens": 0,
+                },
+            },
+            "service_tier": "default",
+        }
 
     async def _chat_event_stream(
         self,

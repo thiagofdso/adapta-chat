@@ -102,6 +102,26 @@ class BaseContentGenerator:
 
         return self._extract_answer_text(result)
 
+    async def call_message_openai(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
+        """Wrapper que espelha o contrato da API OpenAI usando o cliente Adapta."""
+        if not messages:
+            raise ValueError("messages deve conter pelo menos um item no formato OpenAI.")
+
+        selected_model = model or self.model_name
+        return await self.client.call_message_openai(
+            messages=messages,
+            model=selected_model,
+            stream=stream,
+            **kwargs,
+        )
+
     async def health_check(self) -> bool:
         candidate = getattr(self.client, "health_check", None)
         if callable(candidate):

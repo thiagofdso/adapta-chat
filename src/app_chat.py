@@ -56,6 +56,14 @@ def main():
     with st.sidebar:
         st.header("Controls")
         if st.button("+ New Chat"):
+            # limpa chat remoto se existir
+            current_chat = st.session_state.get("current_chat_id")
+            if current_chat:
+                try:
+                    client = get_shared_client()
+                    asyncio.run(client.excluir_chat(current_chat))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Falha ao excluir chat remoto %s: %s", current_chat, exc)
             st.session_state.messages = []
             st.session_state.current_chat_id = None
             st.rerun()

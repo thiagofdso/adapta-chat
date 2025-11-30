@@ -22,9 +22,9 @@ from database import (
     update_job_state,
     update_knowledge_status,
 )
-from generators.adapta.claude_opus_generator import ClaudeOpusGenerator
-from generators.adapta.gemini_generator import GeminiGenerator
-from generators.adapta.gpt_generator import GPTGenerator
+from generators_v2.adapta.claude_45_sonnet_generator import Claude45SonnetGenerator
+from generators_v2.adapta.gemini_3_pro_preview_generator import Gemini3ProPreviewGenerator
+from generators_v2.adapta.gpt_5_generator import GPT5Generator
 from utils.logger import logger
 from prompt_manager import generate_knowledge_extraction_prompt
 from utils.text_cleaner import remove_think_tags
@@ -779,12 +779,26 @@ async def _perform_uploads(
     return upload_infos
 
 
+async def _cleanup_chat(generator) -> None:
+    """Exclui o chat associado ao último atendimento do cliente, se existir."""
+    client = getattr(generator, "client", None)
+    if client is None:
+        return
+    chat_id = getattr(client, "last_chat_id", None)
+    if not chat_id:
+        return
+    try:
+        await client.excluir_chat(chat_id)
+        logger.debug(f"Chat {chat_id} excluido com sucesso.")
+    except Exception as exc:
+        logger.warning(f"Falha ao excluir chat {chat_id}: {exc}")
+
+
 async def _call_generator_with_existing_uploads(
     generator,
     prompt: Optional[str],
     upload_infos: List[Tuple[Dict[str, Any], bool, Path]],
     messages: Optional[List[Dict[str, str]]] = None,
-    tool: Optional[str] = None,
 ) -> str:
     if messages is None:
         if prompt is None:
@@ -794,12 +808,16 @@ async def _call_generator_with_existing_uploads(
         payload_messages = [dict(message) for message in messages]
 
     logger.debug(f'Iniciando chamada ao modelo com {len(upload_infos)} arquivo(s) anexados.')
+    files_payload = [info for info, _, _ in upload_infos if info]
     response = await generator.call_model_with_messages(
         payload_messages,
-        file_ids=[info for info, _, _ in upload_infos],
-        tool=tool,
+        files=files_payload,
     )
     logger.debug('Chamada ao modelo concluida com sucesso.')
+    try:
+        await _cleanup_chat(generator)
+    except Exception:
+        pass
     return response
 
 
@@ -809,12 +827,18 @@ async def _cleanup_upload_infos(
     cleanup_local_paths: bool,
 ) -> None:
     for upload_info, cleanup, upload_path in upload_infos:
-        file_id = upload_info.get("id") if upload_info else None
-        if file_id:
+        file_path = None
+        if upload_info:
+            file_path = (
+                upload_info.get("path")
+                or upload_info.get("filePathOnStorage")
+                or upload_info.get("filename")
+            )
+        if file_path:
             try:
-                await generator.client.excluir_arquivo(file_id)
+                await generator.client.excluir_arquivo(file_path)
             except Exception as exc:
-                logger.warning(f"Falha ao excluir arquivo remoto {file_id}: {exc}")
+                logger.warning(f"Falha ao excluir arquivo remoto {file_path}: {exc}")
         if cleanup_local_paths and cleanup:
             try:
                 if upload_path.exists():
@@ -830,7 +854,6 @@ async def _call_generator_with_uploads(
     prompt: Optional[str],
     uploads: List[Tuple[Path, bool]],
     messages: Optional[List[Dict[str, str]]] = None,
-    tool: Optional[str] = None,
     upload_delay: float = 0.0,
 ) -> str:
     upload_infos = await _perform_uploads(generator, uploads, upload_delay)
@@ -840,7 +863,6 @@ async def _call_generator_with_uploads(
             prompt,
             upload_infos,
             messages=messages,
-            tool=tool,
         )
     finally:
         await _cleanup_upload_infos(generator, upload_infos, cleanup_local_paths=True)
@@ -860,7 +882,6 @@ async def _call_with_retries(
     fallback_generator: Optional[Any] = None,
     fallback_attempt: Optional[int] = None,
     messages: Optional[List[Dict[str, str]]] = None,
-    tool: Optional[str] = None,
     prepared_uploads: Optional[List[Tuple[Path, bool]]] = None,
     persist_uploads: bool = False,
     upload_context: Optional[Dict[Any, List[Tuple[Dict[str, Any], bool, Path]]]] = None,
@@ -933,7 +954,6 @@ async def _call_with_retries(
                     prompt,
                     upload_infos,
                     messages=messages,
-                    tool=tool,
                 )
 
             return await _call_generator_with_uploads(
@@ -941,7 +961,6 @@ async def _call_with_retries(
                 prompt,
                 uploads,
                 messages=messages,
-                tool=tool,
                 upload_delay=upload_delay,
             )
         except Exception as exc:
@@ -1033,9 +1052,9 @@ async def run_stage1_index_creation():
         logger.info('Nenhum job pendente para o Estagio 1.')
         return
 
-    claude_generator = ClaudeOpusGenerator()
-    gpt_generator = GPTGenerator()
-    gemini_generator = GeminiGenerator()
+    claude_generator = Claude45SonnetGenerator()
+    gpt_generator = GPT5Generator()
+    gemini_generator = Gemini3ProPreviewGenerator()
 
     for job in pending_jobs:
         job_id = job['id']
@@ -1103,7 +1122,6 @@ async def run_stage1_index_creation():
                     consolidate=False,
                     generator_cycle=[claude_generator, gpt_generator, gemini_generator],
                     messages=conversation,
-                    tool="",
                     prepared_uploads=prepared_uploads,
                     persist_uploads=True,
                     upload_context=persistent_upload_context,
@@ -1344,7 +1362,7 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
         if source_prompt:
             prompt += source_prompt
 
-        generator = ClaudeOpusGenerator()
+        generator = Claude45SonnetGenerator()
         markdown_output = await _call_with_retries(
             generator=generator,
             prompt=prompt,
@@ -1352,7 +1370,6 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
             base_dir=abs_folder_path,
             prefix='stage2',
             prefer_original_when_single=True,
-            tool="",
             upload_unique_hint=str(knowledge_id),
         )
         markdown_output = remove_think_tags(markdown_output)
