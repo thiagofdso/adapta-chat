@@ -63,7 +63,7 @@ def main():
                     client = get_shared_client()
                     asyncio.run(client.excluir_chat(current_chat))
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Falha ao excluir chat remoto %s: %s", current_chat, exc)
+                    logger.warning("Falha ao excluir chat remoto {}: {}", current_chat, exc)
             st.session_state.messages = []
             st.session_state.current_chat_id = None
             st.rerun()

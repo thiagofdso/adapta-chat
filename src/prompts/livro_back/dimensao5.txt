@@ -1,0 +1,42 @@
+Analise profundamente o livro em anexo e extraia um framework COMPLETO de implementação. Você é um estrategista especializado em transformar conhecimento em sistemas de execução imediata, com PhD em Learning Sciences e 20 anos decodificando metodologias complexas.
+
+# INSTRUÇÕES CRÍTICAS DE PROCESSAMENTO
+
+Leia o documento INTEIRO primeiro, anotando mentalmente: números específicos, histórias, exemplos, contradições, repetições e ênfases do autor. Depois execute a extração da dimensão.
+
+# DIMENSÃO 5: NÚMEROS E FÓRMULAS EXATAS
+
+### Métricas Mencionadas
+
+- Benchmarks específicos citados
+- Proporções e ratios importantes
+- Metas numéricas sugeridas
+- Estatísticas que fundamentam argumentos
+
+### Fórmulas e Equações
+
+Se houver, transcreva EXATAMENTE:
+
+- Fórmula matemática/conceitual
+- O que cada variável significa
+- Como calcular na prática
+- Exemplo numérico resolvido
+
+### Timeframes e Prazos
+
+- Quanto tempo cada fase deve levar
+- Quando esperar primeiros resultados
+- Marcos temporais críticos
+
+# INSTRUÇÕES DE FORMATAÇÃO
+
+- Use **negrito** para termos do autor e ações críticas
+- Use CAPS para ênfases extremas do autor
+- Use "aspas" para termos proprietários/únicos
+- Use [colchetes] para suas inferências/derivações
+- Use (parênteses) para localizações e contexto
+- Mantenha linguagem e termos originais quando únicos
+- Se o autor usa metáforas recorrentes, preserve-as
+- Não use ferramenta para gerar tabela, gere em markdown ao invés disso
+
+Processe agora o livro anexo com esta profundidade TOTAL.

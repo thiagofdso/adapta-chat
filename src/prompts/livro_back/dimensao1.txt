@@ -1,0 +1,123 @@
+Analise profundamente o livro em anexo e extraia um framework COMPLETO de implementação. Pause a cada DIMENSÃO respondida. Você é um estrategista especializado em transformar conhecimento em sistemas de execução imediata, com PhD em Learning Sciences e 20 anos decodificando metodologias complexas.
+
+# INSTRUÇÕES CRÍTICAS DE PROCESSAMENTO
+
+Leia o documento INTEIRO primeiro, anotando mentalmente: números específicos, histórias, exemplos, contradições, repetições e ênfases do autor. Depois execute a extração da dimensão.
+
+# DIMENSÃO 1: FRAMEWORK COMPLETO DE IMPLEMENTAÇÃO
+
+### SUMÁRIO EXECUTIVO TRANSFORMADOR
+
+Escreva 3 parágrafos densos:
+
+- Parágrafo 1: O problema central que o livro resolve (com dados/estatísticas se mencionados)
+- Parágrafo 2: A solução proposta e por que é única/revolucionária
+- Parágrafo 3: A transformação prometida com exemplos concretos do autor
+
+### PARTE I: ARQUITETURA CONCEITUAL
+
+**1.1 Premissa Central**
+
+- A grande sacada em uma frase memorável
+- Por que isso muda tudo no campo
+
+**1.2 Pilares Fundamentais** Identifique 3-7 princípios base que sustentam TODO o sistema:
+
+- Nome do princípio
+- Definição precisa do autor
+- Por que é essencial (não opcional)
+- Consequência de ignorar
+
+**1.3 Modelos Mentais e Frameworks** Extraia TODOS os modelos/equações/matrizes apresentados:
+
+- Nome exato usado pelo autor
+- Visualização (descrição ou ASCII se possível)
+- Como usar na prática
+- Quando usar x quando NÃO usar
+- Limitações reconhecidas
+- Variações ou adaptações possíveis
+- Exemplo do livro
+
+**1.4 Mudanças de Paradigma** Formato: "Antes achávamos X → Agora sabemos Y" Liste todas as inversões de pensamento propostas
+
+### PARTE II: SISTEMA DE IMPLEMENTAÇÃO
+
+**2.1 Pré-Requisitos Absolutos**
+
+- [ ]  Checklist do que DEVE estar pronto antes de começar
+- [ ]  Recursos mínimos necessários
+- [ ]  Mindset/crenças necessárias
+- [ ]  Red flags: sinais de que NÃO está pronto
+
+**2.2 Processo Sequencial Detalhado** PASSO A PASSO numerado e cronológico:
+
+```text
+FASE 1: [Nome] (Tempo estimado)
+├─ Passo 1.1: [Ação específica]
+│ ├─ Como fazer: [Instruções]
+│ ├─ Ferramenta: [Se aplicável]
+│ └─ Resultado esperado: [Métrica]
+├─ Passo 1.2: [...]
+└─ Checkpoint: [Como saber se está pronto para Fase 2]
+```
+
+**2.3 Árvore de Decisão Completa** Para cada ponto de decisão crítico:
+
+```
+text
+Situação: [Contexto]
+├─ SE [condição A] → ENTÃO [ação X]
+│   ├─ Razão: [Por que essa é a escolha certa]
+├─ SE [condição B] → ENTÃO [ação Y]
+├─ SE [nenhuma acima] → ENTÃO [ação padrão]
+
+```
+
+**2.4 Métricas e KPIs**
+
+- Indicadores de progresso (leading indicators)
+- Indicadores de resultado (lagging indicators)
+- Benchmarks: ruim/médio/bom/excelente
+- Frequência de medição
+
+### PARTE III: FERRAMENTAS PRÁTICAS
+
+**3.1 Templates Prontos** Crie templates preenchíveis baseados no livro:
+
+- Template de [X]: estrutura exata
+- Exemplo preenchido do livro
+- Variações para diferentes contextos
+
+**3.2 Checklists Operacionais**
+
+- [ ]  Checklist diário
+- [ ]  Checklist semanal
+- [ ]  Checklist de auditoria mensal
+- [ ]  Checklist de troubleshooting
+
+**3.3 Scripts e Swipe Copy** Extraia frases/scripts exatos mencionados:
+
+- Situação de uso
+- Script palavra por palavra
+- Variações sugeridas
+
+**3.4 Exercícios e Drills** Todos os exercícios práticos com:
+
+- Nome do exercício
+- Objetivo específico
+- Instruções passo a passo
+- Tempo necessário
+- Critério de sucesso
+
+# INSTRUÇÕES DE FORMATAÇÃO
+
+- Use **negrito** para termos do autor e ações críticas
+- Use CAPS para ênfases extremas do autor
+- Use "aspas" para termos proprietários/únicos
+- Use [colchetes] para suas inferências/derivações
+- Use (parênteses) para localizações e contexto
+- Mantenha linguagem e termos originais quando únicos
+- Se o autor usa metáforas recorrentes, preserve-as
+- Não use ferramenta para gerar tabela, gere em markdown ao invés disso
+
+Processe agora o livro anexo com esta profundidade TOTAL.

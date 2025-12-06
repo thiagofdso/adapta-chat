@@ -308,7 +308,7 @@ class AdaptaClient:
                 self._session_update_events.append(current_monotonic)
                 self.last_session_update_at = datetime.now(timezone.utc)
 
-                logger.debug("Sessão atualizada com sucesso. Token: %s...", session_jwt[:20])
+                logger.debug("Sessão atualizada com sucesso. Token: {}...", session_jwt[:20])
 
             except httpx.HTTPError as e:
                 logger.error(f"Erro ao atualizar sessão: {e}")

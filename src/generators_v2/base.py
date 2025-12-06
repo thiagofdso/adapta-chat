@@ -140,7 +140,7 @@ class BaseContentGenerator:
                 await simulate_login()
             return True
         except Exception as exc:
-            logger.error("Health check failed for %s: %s", self.get_provider_name(), exc)
+            logger.error("Health check failed for {}: {}", self.get_provider_name(), exc)
             return False
 
     def get_supported_models(self) -> List[str]:
@@ -230,7 +230,7 @@ class BaseContentGenerator:
         normalized: List[Dict[str, Any]] = []
         for file_info in files:
             if not isinstance(file_info, dict):
-                logger.warning("Ignorando arquivo anexado com formato inválido: %s", file_info)
+                logger.warning("Ignorando arquivo anexado com formato inválido: {}", file_info)
                 continue
             normalized.append(file_info)
 

@@ -22,9 +22,9 @@ class GptOssGenerator(BaseContentGenerator):
 
         self.client = AdaptaClient(
             cookies_str=cookies_str,
-            timeout=600.0,
-            connect_timeout=120.0,
-            read_timeout=600.0,
+            timeout=1200.0,
+            connect_timeout=15.0,
+            read_timeout=1200.0,
             session_id=session_id
         )
         self.model_name = "GPT_OSS"

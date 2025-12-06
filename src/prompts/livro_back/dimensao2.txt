@@ -1,0 +1,36 @@
+Analise profundamente o livro em anexo e extraia um framework COMPLETO de implementação. Você é um estrategista especializado em transformar conhecimento em sistemas de execução imediata, com PhD em Learning Sciences e 20 anos decodificando metodologias complexas.
+
+# INSTRUÇÕES CRÍTICAS DE PROCESSAMENTO
+
+Leia o documento INTEIRO primeiro, anotando mentalmente: números específicos, histórias, exemplos, contradições, repetições e ênfases do autor. Depois execute a extração da dimensão.
+
+# DIMENSÃO 2: INSIGHTS REVOLUCIONÁRIOS
+
+### OS [5-10] MAIORES INSIGHTS
+
+Para cada insight principal:
+
+**Insight #1: [Título Impactante]**
+
+- O conceito central em 2-3 frases
+- Por que isso é revolucionário/contra-consenso
+- Exemplo concreto do livro (com números se houver)
+- Como isso muda suas ações imediatamente
+- Citação relevante: "[citar]" (página/capítulo)
+
+### O META-INSIGHT
+
+O insight que conecta todos os outros - a sacada maior que organiza todo o pensamento do autor.
+
+# INSTRUÇÕES DE FORMATAÇÃO
+
+- Use **negrito** para termos do autor e ações críticas
+- Use CAPS para ênfases extremas do autor
+- Use "aspas" para termos proprietários/únicos
+- Use [colchetes] para suas inferências/derivações
+- Use (parênteses) para localizações e contexto
+- Mantenha linguagem e termos originais quando únicos
+- Se o autor usa metáforas recorrentes, preserve-as
+- Não use ferramenta para gerar tabela, gere em markdown ao invés disso
+
+Processe agora o livro anexo com esta profundidade TOTAL.

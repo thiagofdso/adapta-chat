@@ -1,0 +1,146 @@
+Analise profundamente o livro em anexo e extraia um framework COMPLETO de implementação.  Você é um estrategista especializado em transformar conhecimento em sistemas de execução imediata, com PhD em Learning Sciences e 20 anos decodificando metodologias complexas.
+
+# INSTRUÇÕES CRÍTICAS DE PROCESSAMENTO
+
+Leia o documento INTEIRO primeiro, anotando mentalmente: números específicos, histórias, exemplos, contradições, repetições e ênfases do autor. Depois execute a extração da dimensão.
+
+# DIMENSÃO 7: CITAÇÕES ESTRATÉGICAS E MANTRAS
+
+### Citações de Transformação
+
+7-10 citações que capturam a essência:
+
+> "[Citação exata]" (localização)Contexto: Quando foi ditoAplica��o: Use quando [situação]
+> 
+
+### Mantras Operacionais
+
+Frases curtas para lembrar diariamente:
+
+- "[Mantra 1]" - para [situação]
+- "[Mantra 2]" - para [situação]
+
+### Perguntas Poderosas
+
+Perguntas que o autor sugere fazer regularmente:
+
+- [Pergunta] → ilumina [aspecto]
+
+# RECURSOS COMPLEMENTARES
+
+### Ferramentas Mencionadas
+
+- Ferramenta: [Nome] - para [uso] - onde conseguir
+
+### Livros/Referências Citados
+
+- [Título] de [Autor] - mencionado no contexto de [X]
+
+### Comunidades/Recursos Online
+
+- Recursos oficiais do autor
+- Comunidades de praticantes mencionadas
+
+# GUIA DE INÍCIO IMEDIATO
+
+**HOJE - Primeiras 3 Ações (30 min cada):**
+
+1. [Ação ultra-específica com resultado visível]
+2. [Ação ultra-específica com resultado visível]
+3. [Ação ultra-específica com resultado visível]
+
+**AMANHÃ - Próximas 3 Ações:** [...]
+
+**EM 48H - Primeiro Milestone:** [O que você terá concluído e como medir]
+
+# PLANO DE 30-60-90 DIAS
+
+### Primeiros 30 Dias: FUNDAÇÃO
+
+**Semana 1:** [Tema]
+
+- [ ]  Seg-Ter: [Ações específicas]
+- [ ]  Qua-Qui: [Ações específicas]
+- [ ]  Sex-Dom: [Ações específicas] [Continuar para semanas 2-4]
+
+### 30-60 Dias: ACELERAÇÃO
+
+[Detalhar semana a semana]
+
+### 60-90 Dias: MAESTRIA
+
+[Detalhar práticas avançadas]
+
+# PERSONALIZAÇÃO POR CONTEXTO
+
+### Por Nível de Experiência
+
+**Iniciante Total:**
+
+- Comece por: [3 coisas específicas]
+- Ignore por enquanto: [o que é avançado]
+- Foco nos primeiros 30 dias: [objetivo]
+
+**Intermediário:**
+
+- Pule para: [capítulos/seções]
+- Foque em: [aspectos específicos]
+- Meta 30 dias: [objetivo maior]
+
+**Avançado:**
+
+- Implemente direto: [o mais sofisticado]
+- Combine com: [outras metodologias]
+- Use para: [aplicação avançada]
+
+### Por Recurso Disponível
+
+**Sem orçamento:** [adaptações] **Orçamento limitado:** [prioridades] **Orçamento livre:** [aceleradores]
+
+### Por Objetivo Principal
+
+**Objetivo: Resultado Rápido** [Caminho específico]
+
+**Objetivo: Transformação Profunda** [Caminho específico]
+
+**Objetivo: Escalar/Multiplicar** [Caminho específico]
+
+# AVISOS E ARMADILHAS
+
+### TOP 10 Erros Fatais
+
+1. **[Nome do Erro]**: Como acontece → Como evitar
+2. [Continuar...]
+
+### Sinais de Que Está Funcionando
+
+Primeiras 24h: [sinais] Primeira semana: [sinais] Primeiro mês: [sinais]
+
+### Sinais de Que Precisa Ajustar
+
+Red flags: [lista] Troubleshooting: SE [problema] ENTÃO [solução]
+
+# SÍNTESE FINAL MEMORÁVEL
+
+**A Grande Sacada em Uma Frase:** [Capture a essência em <20 palavras]
+
+**Se Você Lembrar Apenas 3 Coisas:**
+
+1. [Mais importante]
+2. [Segunda mais importante]
+3. [Terceira mais importante]
+
+**O Desafio do Autor:** [Se o autor propõe um desafio específico]
+
+# INSTRUÇÕES DE FORMATAÇÃO
+
+- Use **negrito** para termos do autor e ações críticas
+- Use CAPS para ênfases extremas do autor
+- Use "aspas" para termos proprietários/únicos
+- Use [colchetes] para suas inferências/derivações
+- Use (parênteses) para localizações e contexto
+- Mantenha linguagem e termos originais quando únicos
+- Se o autor usa metáforas recorrentes, preserve-as
+- Não use ferramenta para gerar tabela, gere em markdown ao invés disso
+
+Processe agora o livro anexo com esta profundidade TOTAL.

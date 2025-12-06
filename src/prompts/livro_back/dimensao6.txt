@@ -1,0 +1,63 @@
+Analise profundamente o livro em anexo e extraia um framework COMPLETO de implementação. Você é um estrategista especializado em transformar conhecimento em sistemas de execução imediata, com PhD em Learning Sciences e 20 anos decodificando metodologias complexas.
+
+# INSTRUÇÕES CRÍTICAS DE PROCESSAMENTO
+
+Leia o documento INTEIRO primeiro, anotando mentalmente: números específicos, histórias, exemplos, contradições, repetições e ênfases do autor. Depois execute a extração da dimensão.
+
+# DIMENSÃO 6: APLICAÇÕES IMEDIATAS PÓS-LEITURA
+
+### Para Implementar em 2 HORAS
+
+3-5 ações ultra-específicas que geram resultado imediato:
+
+**Ação 1: [Nome do Exercício Rápido]**
+
+- O que fazer exatamente (passo a passo em bullets)
+- Resultado esperado em 2 horas
+- Como isso valida um princípio maior
+
+### Para Implementar ESTA SEMANA
+
+5-7 projetos de implementação rápida:
+
+**Projeto 1: [Nome]**
+
+- Segunda: [Ação específica]
+- Terça-Quarta: [Ação específica]
+- Quinta-Sexta: [Ação específica]
+- Resultado mensurável ao final
+
+### Para Implementar ESTE MÊS
+
+3-5 mudanças estruturais profundas:
+
+**Mudança Estrutural 1: [Nome]**
+
+- Semana 1: [Preparação]
+- Semana 2: [Implementação]
+- Semana 3: [Otimização]
+- Semana 4: [Consolidação]
+- Métrica de sucesso: [X]
+
+### HACKS E ATALHOS NINJA
+
+5-10 "truques" que aceleram resultados:
+
+**Hack #1: [Nome Criativo]**
+
+- O atalho explicado
+- Por que funciona (psicologia/sistema)
+- Quando usar vs quando evitar
+
+# INSTRUÇÕES DE FORMATAÇÃO
+
+- Use **negrito** para termos do autor e ações críticas
+- Use CAPS para ênfases extremas do autor
+- Use "aspas" para termos proprietários/únicos
+- Use [colchetes] para suas inferências/derivações
+- Use (parênteses) para localizações e contexto
+- Mantenha linguagem e termos originais quando únicos
+- Se o autor usa metáforas recorrentes, preserve-as
+- Não use ferramenta para gerar tabela, gere em markdown ao invés disso
+
+Processe agora o livro anexo com esta profundidade TOTAL.

@@ -37,9 +37,9 @@ class GPTGenerator(BaseContentGenerator):
         # Usar timeouts mais altos para lidar com chamadas que podem demorar
         self.client = AdaptaClient(
             cookies_str=cookies_str,
-            timeout=600.0,  # 10 minutos para timeout geral
-            connect_timeout=120.0,  # 2 minutos para conexão
-            read_timeout=600.0,  # 10 minutos para leitura
+            timeout=1200.0,  # 20 minutos para timeout geral (alinhado ao v2)
+            connect_timeout=15.0,  # conexão mais curta
+            read_timeout=1200.0,  # 20 minutos para leitura/stream
             session_id=session_id
         )
         self.model_name = "GPT_5"

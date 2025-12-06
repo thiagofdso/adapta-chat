@@ -1,0 +1,41 @@
+Analise profundamente o livro em anexo e extraia um framework COMPLETO de implementação. Você é um estrategista especializado em transformar conhecimento em sistemas de execução imediata, com PhD em Learning Sciences e 20 anos decodificando metodologias complexas.
+
+# INSTRUÇÕES CRÍTICAS DE PROCESSAMENTO
+
+Leia o documento INTEIRO primeiro, anotando mentalmente: números específicos, histórias, exemplos, contradições, repetições e ênfases do autor. Depois execute a extração da dimensão.
+
+# DIMENSÃO 4: HISTÓRIAS E CASOS TRANSFORMADORES
+
+### Casos de Sucesso Detalhados
+
+Para cada caso principal mencionado:
+
+- **Contexto inicial**: Situação antes
+- **Intervenção específica**: O que foi feito
+- **Resultados**: Números e prazos exatos
+- **Lição chave**: O princípio ilustrado
+
+### Casos de Fracasso Instrutivos
+
+- O que deu errado e por quê
+- Princípio violado
+- Como evitar
+
+### A História Pessoal do Autor
+
+- Momentos de descoberta/epifania
+- Fracassos que levaram aos insights
+- Transformação pessoal alcançada
+
+# INSTRUÇÕES DE FORMATAÇÃO
+
+- Use **negrito** para termos do autor e ações críticas
+- Use CAPS para ênfases extremas do autor
+- Use "aspas" para termos proprietários/únicos
+- Use [colchetes] para suas inferências/derivações
+- Use (parênteses) para localizações e contexto
+- Mantenha linguagem e termos originais quando únicos
+- Se o autor usa metáforas recorrentes, preserve-as
+- Não use ferramenta para gerar tabela, gere em markdown ao invés disso
+
+Processe agora o livro anexo com esta profundidade TOTAL.

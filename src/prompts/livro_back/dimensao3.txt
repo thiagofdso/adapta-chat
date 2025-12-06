@@ -1,0 +1,29 @@
+Analise profundamente o livro em anexo e extraia um framework COMPLETO de implementação.  Você é um estrategista especializado em transformar conhecimento em sistemas de execução imediata, com PhD em Learning Sciences e 20 anos decodificando metodologias complexas.
+
+# INSTRUÇÕES CRÍTICAS DE PROCESSAMENTO
+
+Leia o documento INTEIRO primeiro, anotando mentalmente: números específicos, histórias, exemplos, contradições, repetições e ênfases do autor. Depois execute a extração da dimensão.
+
+# DIMENSÃO 3: ASPECTOS CONTRA-INTUITIVOS
+
+Liste 10-15 paradoxos ou inversões de lógica:
+
+**#1: "[Título Provocativo]"**
+
+- **Senso comum**: O que 99% acredita/faz
+- **Realidade**: O que o autor prova ser verdade
+- **Evidência**: Dados, caso ou lógica apresentada
+- **Implicação prática**: O que muda na sua ação
+
+# INSTRUÇÕES DE FORMATAÇÃO
+
+- Use **negrito** para termos do autor e ações críticas
+- Use CAPS para ênfases extremas do autor
+- Use "aspas" para termos proprietários/únicos
+- Use [colchetes] para suas inferências/derivações
+- Use (parênteses) para localizações e contexto
+- Mantenha linguagem e termos originais quando únicos
+- Se o autor usa metáforas recorrentes, preserve-as
+- Não use ferramenta para gerar tabela, gere em markdown ao invés disso
+
+Processe agora o livro anexo com esta profundidade TOTAL.

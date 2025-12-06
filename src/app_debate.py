@@ -201,7 +201,7 @@ def main():
             await client.simulate_login()
             st.session_state.auth_done = True
         except Exception as exc:  # noqa: BLE001
-            logger.error("Falha ao autenticar client compartilhado: %s", exc)
+            logger.error("Falha ao autenticar client compartilhado: {}", exc)
             raise
 
     # --- UI Rendering ---
@@ -450,11 +450,11 @@ def main():
                                     loop = get_shared_loop()
                                     asyncio.set_event_loop(loop)
                                     loop.run_until_complete(client.excluir_chat(ids_para_remover))
-                                    logger.info("Chats removidos ao final do debate: %s", ids_para_remover)
+                                    logger.info("Chats removidos ao final do debate: {}", ids_para_remover)
                                 st.session_state.agent_chat_ids = {}
                                 st.session_state.manager_chat_id = None
                             except Exception as exc:  # noqa: BLE001
-                                logger.warning("Falha ao remover chats ao final do debate: %s", exc)
+                                logger.warning("Falha ao remover chats ao final do debate: {}", exc)
 
                     except Exception as e:
                         error_msg = f"Could not generate or save final conclusion: {e}"

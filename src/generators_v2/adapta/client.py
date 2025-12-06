@@ -162,9 +162,9 @@ class AdaptaClientV2:
             self._auth_cookies = cookies
             missing = {"__client", "__client_uat", "clerk_active_context"} - set(cookies)
             if missing:
-                logger.warning("Cookies esperados nao encontrados: %s", ", ".join(sorted(missing)))
+                logger.warning("Cookies esperados nao encontrados: {}", ", ".join(sorted(missing)))
 
-            logger.info("Login concluído com session_id=%s", self._session_id)
+            logger.info("Login concluído com session_id={}", self._session_id)
             return AuthResult(session_id=self._session_id, cookies=cookies)
 
     async def call_model(
@@ -363,7 +363,7 @@ class AdaptaClientV2:
         data = payload.get("data") or {}
         messages = data.get("messages") or []
         if not isinstance(messages, list):
-            logger.warning("Resposta inesperada ao consultar conversas: %s", payload)
+            logger.warning("Resposta inesperada ao consultar conversas: {}", payload)
             return []
         return messages
 
@@ -375,7 +375,7 @@ class AdaptaClientV2:
         client = await self._ensure_client()
         await self._ensure_authenticated()
         token = await self._ensure_bearer_token()
-        logger.debug("Solicitando exclusão de %d chats.", len(chat_ids))
+        logger.debug("Solicitando exclusão de {} chats.", len(chat_ids))
 
         response = await client.request(
             "DELETE",
@@ -391,7 +391,7 @@ class AdaptaClientV2:
         )
         response.raise_for_status()
         payload = response.json()
-        logger.debug("Resposta da exclusão de chats: %s", payload)
+        logger.debug("Resposta da exclusão de chats: {}", payload)
         return payload
 
     async def excluir_chat(self, chat_ids: Union[str, List[str]]) -> Dict[str, Any]:
@@ -703,7 +703,8 @@ class AdaptaClientV2:
             if self._client is not None:
                 await self._client.aclose()
 
-            timeout = httpx.Timeout(timeout=60.0, connect=15.0, read=60.0)
+            # Streaming do chat pode levar tempo; ampliamos tempo total/leitura (dobrado).
+            timeout = httpx.Timeout(timeout=1200.0, connect=15.0, read=1200.0)
             headers = {
                 "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
@@ -721,7 +722,7 @@ class AdaptaClientV2:
 
     async def _fetch_sign_in_page(self, client: httpx.AsyncClient) -> None:
         url = f"{AGENT_BASE_URL}/sign-in"
-        logger.debug("Buscando pagina de login: %s", url)
+        logger.debug("Buscando pagina de login: {}", url)
         response = await client.get(
             url,
             headers={
@@ -734,7 +735,7 @@ class AdaptaClientV2:
 
     async def _start_sign_in_attempt(self, client: httpx.AsyncClient) -> None:
         url = f"{CLERK_BASE_URL}/client/sign_ins"
-        logger.debug("Iniciando tentativa de login (passkey) em %s", url)
+        logger.debug("Iniciando tentativa de login (passkey) em {}", url)
         response = await client.post(
             url,
             params=self._clerk_params(),
@@ -748,7 +749,7 @@ class AdaptaClientV2:
 
     async def _complete_password_sign_in(self, client: httpx.AsyncClient) -> Dict[str, Any]:
         url = f"{CLERK_BASE_URL}/client/sign_ins"
-        logger.debug("Enviando credenciais para concluir o login em %s", url)
+        logger.debug("Enviando credenciais para concluir o login em {}", url)
         response = await client.post(
             url,
             params=self._clerk_params(),
@@ -765,7 +766,7 @@ class AdaptaClientV2:
 
     async def _touch_session(self, client: httpx.AsyncClient, session_id: str) -> None:
         url = f"{CLERK_BASE_URL}/client/sessions/{session_id}/touch"
-        logger.debug("Atualizando sessao %s em %s", session_id, url)
+        logger.debug("Atualizando sessao {} em {}", session_id, url)
         response = await client.post(
             url,
             params=self._clerk_params(),
@@ -860,7 +861,7 @@ class AdaptaClientV2:
             raise RuntimeError("Session ID nao disponivel para obter token.")
 
         url = f"{CLERK_BASE_URL}/client/sessions/{self._session_id}/tokens/Production"
-        logger.debug("Obtendo token de produção em %s", url)
+        logger.debug("Obtendo token de produção em {}", url)
         response = await client.post(
             url,
             params=self._clerk_params(),
@@ -1052,7 +1053,7 @@ class AdaptaClientV2:
                     try:
                         event = json.loads(payload_str)
                     except json.JSONDecodeError:
-                        logger.warning("Evento SSE invalido recebido: %s", payload_str)
+                        logger.warning("Evento SSE invalido recebido: {}", payload_str)
                         continue
 
                     event_type = event.get("type")
@@ -1461,7 +1462,7 @@ class AdaptaClientV2:
         try:
             await self._touch_session(client, self._session_id)
         except httpx.HTTPError as exc:
-            logger.debug("Falha ao tocar sessao antes do logout: %s", exc)
+            logger.debug("Falha ao tocar sessao antes do logout: {}", exc)
 
         await self._notify_logout_navigation(client)
         await self._delete_session(client)
@@ -1487,7 +1488,7 @@ class AdaptaClientV2:
                 content="[]",
             )
         except httpx.HTTPError as exc:
-            logger.debug("Falha ao notificar navegação de logout: %s", exc)
+            logger.debug("Falha ao notificar navegação de logout: {}", exc)
 
     async def _delete_session(self, client: httpx.AsyncClient) -> None:
         params = {
@@ -1508,7 +1509,7 @@ class AdaptaClientV2:
                 headers=headers,
             )
         except httpx.HTTPError as exc:
-            logger.debug("Falha ao encerrar sessão: %s", exc)
+            logger.debug("Falha ao encerrar sessão: {}", exc)
 
     async def _register_chat_view(self, chat_id: str) -> None:
         """Registra o chat recém criado no endpoint de analytics do Adapta."""
@@ -1536,7 +1537,7 @@ class AdaptaClientV2:
                 json=payload,
             )
         except httpx.HTTPError as exc:
-            logger.debug("Falha ao registrar chat view: %s", exc)
+            logger.debug("Falha ao registrar chat view: {}", exc)
 
     async def _send_amplitude_event(self, chat_id: str, model: str) -> None:
         """Replica a chamada de métricas para o Amplitude observada no front."""
@@ -1585,7 +1586,7 @@ class AdaptaClientV2:
                 content=json.dumps(payload),
             )
         except httpx.HTTPError as exc:
-            logger.debug("Falha ao enviar métrica para o Amplitude: %s", exc)
+            logger.debug("Falha ao enviar métrica para o Amplitude: {}", exc)
 
 async def _main() -> None:
     async with AdaptaClientV2() as client:
