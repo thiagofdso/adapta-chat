@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+<head>
+<title>#F117 14. Como exportar páginas no Notion com IA - Likensina - By @xEistibus ❤️‍🔥 LABORATÓRIO DE IA _119_audio</title>
+<dateCreated>2025-12-07T19:56:08.099271</dateCreated>
+</head>
+<body>
+<outline text="#F117 14. Como exportar páginas no Notion com IA - Likensina - By @xEistibus ❤️‍🔥 LABORATÓRIO DE IA _119_audio">
+<outline text="EXPORTAÇÃO NO OCEAN">
+<outline text="Este tópico explica os diferentes métodos de exportação na plataforma Ocean, distinguindo entre conteúdo textual e bases de dados, com procedimentos específicos para cada tipo."/>
+<outline text="Existem dois tipos principais de conteúdo no Ocean: texto puro e bases de dados"/>
+<outline text="Cada tipo de conteúdo requer um formato de exportação específico"/>
+<outline text="O processo de exportação varia conforme o tipo de visualização desejada"/>
+<outline text="EXPORTAÇÃO DE CONTEÚDO TEXTUAL">
+<outline text="Conteúdo que consiste em texto, tabelas ou imagens na própria página, sem bases de dados específicas."/>
+<outline text="Conteúdo 100% textual não possui base de dados no Ocean"/>
+<outline text="Sempre deve ser exportado em formato PDF"/>
+<outline text="Exemplo: O perfil da Buyer Persona é um caso típico de conteúdo textual"/>
+<outline text="O processo é: exportar &gt; PDF &gt; visualização atual &gt; exportar tudo &gt; exportar"/>
+</outline>
+<outline text="EXPORTAÇÃO DE BASES DE DADOS">
+<outline text="Conteúdo que contém informações estruturadas em formato de base de dados."/>
+<outline text="Bases de dados devem sempre ser exportadas em formato HTML"/>
+<outline text="É fundamental selecionar a &quot;visualização geral&quot; antes de exportar para obter todos os dados"/>
+<outline text="A configuração correta é: HTML &gt; visualização atual &gt; incluir conteúdo tudo"/>
+<outline text="PROCESSO DE EXPORTAÇÃO DE BASES DE DADOS">
+<outline text="Acessar a opção exportar e alterar de PDF para HTML"/>
+<outline text="Sempre navegar para a visualização geral antes de exportar"/>
+<outline text="Configurar para incluir todo o conteúdo na exportação"/>
+<outline text="O arquivo resultante será gerado em formato ZIP"/>
+</outline>
+<outline text="EXTRAÇÃO E USO DOS ARQUIVOS">
+<outline text="O arquivo exportado vem compactado em formato ZIP"/>
+<outline text="É necessário extrair o ZIP clicando duas vezes no arquivo"/>
+<outline text="Dentro da pasta extraída haverá dois arquivos principais"/>
+<outline text="O arquivo específico da visualização estará na pasta &quot;particular e compartilhado&quot;"/>
+<outline text="Este arquivo específico deve ser usado no chat GPT para análise"/>
+</outline>
+</outline>
+</outline>
+</outline>
+</body>
+</opml>

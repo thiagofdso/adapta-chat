@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+<head>
+<title>#F098 14. IA QUE FAZ LAYOUT DE E-BOOKS - By @xEistibus ❤️‍🔥_2 16. MÓDULO 15 - CRIAÇÃO DE CONTEÚDO CO_100_audio</title>
+<dateCreated>2025-12-07T19:00:03.950028</dateCreated>
+</head>
+<body>
+<outline text="#F098 14. IA QUE FAZ LAYOUT DE E-BOOKS - By @xEistibus ❤️‍🔥_2 16. MÓDULO 15 - CRIAÇÃO DE CONTEÚDO CO_100_audio">
+<outline text="Ferramenta e-bookmaker">
+<outline text="A e-bookmaker é uma solução de inteligência artificial para criação automatizada de e-books, com planos de assinatura e sistema de créditos."/>
+<outline text="Permite a criação de e-books de forma automatizada com IA."/>
+<outline text="Oferece uma versão gratuita limitada, cujo uso profissional não é recomendado."/>
+<outline text="Disponibiliza planos de assinatura (mensal, trimestral, anual) baseados em um sistema de créditos."/>
+<outline text="Acesso e Configuração Inicial">
+<outline text="O acesso pode ser feito com uma conta do Gmail ou outros provedores de e-mail."/>
+<outline text="Possui uma interface simples e direta, de carregamento rápido após o login."/>
+<outline text="Não requer conhecimento técnico avançado para ser utilizada."/>
+</outline>
+<outline text="Sistema de Créditos e Planos">
+<outline text="O plano trimestral concede 10 créditos por mês."/>
+<outline text="O uso de créditos varia com o tamanho do e-book: 6 seções custam 1 crédito, 12 seções custam 2 créditos, e 18 seções custam 3 créditos."/>
+<outline text="Os pagamentos podem ser realizados via PIX ou cartão de crédito."/>
+</outline>
+</outline>
+<outline text="Processo de Criação de E-books">
+<outline text="A criação segue três etapas principais: configuração, definição do conteúdo e geração automatizada por IA."/>
+<outline text="O fluxo de criação é dividido em três passos bem definidos."/>
+<outline text="É necessário definir idioma, autor e tipo de material antes da geração do conteúdo."/>
+<outline text="O processo de geração do e-book leva aproximadamente 5 minutos para ser concluído."/>
+<outline text="Configuração Básica">
+<outline text="Permite a seleção do idioma, incluindo o português brasileiro."/>
+<outline text="O nome do autor pode ser definido inicialmente e alterado depois."/>
+<outline text="É possível escolher o tipo de material a ser criado: informativo, história, história infantil, receitas ou poesia."/>
+</outline>
+<outline text="Criação do Prompt com ChatGPT">
+<outline text="Recomenda-se o uso do ChatGPT para elaborar descrições detalhadas que servirão como prompt para guiar a IA."/>
+<outline text="A descrição do e-book possui um limite de 3.000 caracteres."/>
+<outline text="Como exemplo prático, foi criado um e-book sobre procrastinação em profissionais criativos, dividido em 6 seções."/>
+</outline>
+<outline text="Geração Automatizada">
+<outline text="O processo de geração envolve 14 etapas automatizadas."/>
+<outline text="A IA é responsável por criar a capa, o sumário e todo o conteúdo textual."/>
+<outline text="A ferramenta também gera automaticamente uma página de referências ao final do e-book."/>
+</outline>
+</outline>
+<outline text="Recursos de Edição e Personalização">
+<outline text="Após a geração, o e-book pode ser completamente editado, incluindo texto, imagens, capa e dados do autor."/>
+<outline text="Todas as partes do e-book gerado são editáveis."/>
+<outline text="A inserção de imagens é facilitada pela integração com o banco de imagens Unsplash."/>
+<outline text="As alterações realizadas durante a edição são salvas automaticamente."/>
+<outline text="Edição de Texto">
+<outline text="Permite a edição direta no texto através do posicionamento do cursor."/>
+<outline text="É possível adicionar, remover ou modificar qualquer trecho do conteúdo."/>
+<outline text="Oferece controle de zoom para facilitar a visualização durante a edição."/>
+</outline>
+<outline text="Inserção de Imagens">
+<outline text="Integrado com o banco de imagens Unsplash para busca e inserção de fotos."/>
+<outline text="As imagens podem ser redimensionadas e posicionadas de forma flexível no layout."/>
+<outline text="A busca por imagens pode ser feita utilizando palavras-chave."/>
+</outline>
+<outline text="Personalização de Capa e Autor">
+<outline text="O título do e-book pode ser alterado a qualquer momento."/>
+<outline text="O nome do autor também pode ser modificado conforme a necessidade."/>
+<outline text="Permite a substituição completa da capa gerada pela ferramenta."/>
+</outline>
+</outline>
+<outline text="Finalização e Download">
+<outline text="O e-book final pode ser baixado em PDF, é enviado por e-mail e pode ser usado profissionalmente ou para diagramação externa."/>
+<outline text="O download do arquivo final está disponível em formato PDF."/>
+<outline text="Uma cópia do e-book é enviada automaticamente para o e-mail cadastrado na plataforma."/>
+<outline text="O conteúdo gerado pode ser utilizado como base para um projeto de rediagramação profissional."/>
+<outline text="Estrutura Final do E-book">
+<outline text="Capa personalizada gerada pela inteligência artificial."/>
+<outline text="Sumário criado com base nas seções definidas."/>
+<outline text="Conteúdo textual completo, organizado por seções."/>
+<outline text="Sinopse na contracapa."/>
+<outline text="Lista de referências bibliográficas utilizadas."/>
+</outline>
+</outline>
+<outline text="Recomendações e Boas Práticas">
+<outline text="É fundamental revisar todo o conteúdo gerado antes da publicação ou entrega, pois a IA pode conter vieses e imprecisões."/>
+<outline text="Sempre realize uma revisão completa do conteúdo antes de entregá-lo ao cliente."/>
+<outline text="Verifique as informações para identificar possíveis vieses da inteligência artificial."/>
+<outline text="Confira todos os dados e fatos apresentados no livro digital."/>
+<outline text="Utilize a ferramenta como um ponto de partida para um trabalho profissional, e não como o produto final."/>
+</outline>
+</outline>
+</body>
+</opml>

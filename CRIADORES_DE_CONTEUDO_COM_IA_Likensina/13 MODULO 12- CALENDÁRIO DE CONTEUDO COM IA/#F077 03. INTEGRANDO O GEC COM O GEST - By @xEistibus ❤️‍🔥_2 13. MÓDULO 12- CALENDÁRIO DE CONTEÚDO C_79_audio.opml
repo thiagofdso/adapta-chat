@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+<head>
+<title>#F077 03. INTEGRANDO O GEC COM O GEST - By @xEistibus ❤️‍🔥_2 13. MÓDULO 12- CALENDÁRIO DE CONTEÚDO C_79_audio</title>
+<dateCreated>2025-12-07T15:32:27.690150</dateCreated>
+</head>
+<body>
+<outline text="#F077 03. INTEGRANDO O GEC COM O GEST - By @xEistibus ❤️‍🔥_2 13. MÓDULO 12- CALENDÁRIO DE CONTEÚDO C_79_audio">
+<outline text="INTEGRAÇÃO DE TEMPLATES NO NOTION: Conectando templates de gestão de conteúdo e estratégia para gerenciar calendários de conteúdo de clientes de forma integrada.">
+    <outline text="A integração permite a criação de calendários dentro da estratégia do cliente e seu mapeamento no template de conteúdo."/>
+    <outline text="O objetivo é centralizar toda a configuração na área de estratégia, facilitando a organização e conformidade dos dados."/>
+    <outline text="CONEXÃO DA BASE DE DADOS DE CLIENTES: Utilização da função 'vinculação de base de dados' para conectar diferentes bases ao sistema.">
+        <outline text="A base de dados específica utilizada é 'SAFSM, clientes, suporte, teste'."/>
+        <outline text="Permite visualizar dados de uma base específica dentro de qualquer página."/>
+        <outline text="CONFIGURAÇÃO DE FILTROS PARA CLIENTES: Aplicação de filtro avançado para exibir apenas um cliente específico.">
+            <outline text="O filtro utiliza a condição 'nome, contém' para selecionar o cliente desejado."/>
+            <outline text="Exemplo prático: filtrar por 'Rafael Weiner' para exibir apenas dados deste cliente."/>
+            <outline text="O filtro força a indexação automática do cliente correto em novas páginas criadas."/>
+        </outline>
+        <outline text="PERSONALIZAÇÃO DA VISUALIZAÇÃO: Ajustes para uma melhor apresentação visual dos dados.">
+            <outline text="Alteração do formato de exibição para galeria."/>
+            <outline text="Configuração da visualização do cartão para mostrar a imagem da capa."/>
+            <outline text="Ajuste do tamanho da capa para 'pequeno' para otimizar o espaço na tela."/>
+        </outline>
+    </outline>
+    <outline text="INTEGRAÇÃO DA BASE DE DADOS DE CONTEÚDO: Vinculação da base de conteúdo ao sistema.">
+        <outline text="A base de dados utilizada é 'FSM, conteúdo, suporte, teste'."/>
+        <outline text="A vinculação permite visualizar todas as propriedades, como título, cliente, canais e data de criação."/>
+        <outline text="Prepara a base para receber automaticamente os dados gerados pelo calendário de conteúdo."/>
+        <outline text="ESTRUTURAÇÃO DAS PROPRIEDADES DE CONTEÚDO: Organização das informações relevantes para cada peça de conteúdo.">
+            <outline text="Propriedades principais incluem: título, canal, formato, data de publicação e linha editorial."/>
+            <outline text="Inclusão da etapa do funil e do tipo de conteúdo (atração, conexão, conversão, reconversão)."/>
+            <outline text="Remoção de propriedades desnecessárias como links, responsável e cliente duplicado para simplificar a visualização."/>
+        </outline>
+        <outline text="CONFIGURAÇÃO DE FILTROS AUTOMÁTICOS: Automação para garantir que o conteúdo seja associado ao cliente correto.">
+            <outline text="Uso de um filtro avançado para forçar a associação a um cliente específico."/>
+            <outline text="Garante a criação automática de propriedades relacionadas ao cliente em novas páginas de conteúdo."/>
+            <outline text="Elimina a necessidade de configuração manual repetitiva, reduzindo erros."/>
+        </outline>
+    </outline>
+    <outline text="ORGANIZAÇÃO POR CANAIS DIGITAIS: Estruturação do conteúdo com base nos canais de publicação.">
+        <outline text="Criação de divisões específicas para Instagram e YouTube para uma gestão segmentada."/>
+        <outline text="Configuração de filtros por canal para permitir uma visualização focada em cada plataforma."/>
+        <outline text="Permite adicionar novos canais de forma flexível através de tags personalizadas."/>
+        <outline text="CONFIGURAÇÃO DE ORDENAÇÃO E FILTROS: Definição de como o conteúdo é exibido e organizado.">
+            <outline text="Ordenação por data de publicação em ordem crescente, do mais recente para o futuro."/>
+            <outline text="Aplicação de filtros específicos por canal digital para uma exibição direcionada."/>
+            <outline text="Flexibilidade para criar novas abas com tags de canais personalizados conforme a necessidade."/>
+        </outline>
+        <outline text="TRANSFORMAÇÃO EM VISUALIZAÇÕES: Adaptação da exibição dos dados para diferentes formatos.">
+            <outline text="Duplicação da visualização em formato de tabela para criar uma nova visualização em formato de calendário."/>
+            <outline text="Configuração das propriedades exibidas no calendário, como fase e linha editorial."/>
+            <outline text="Ocultação de informações redundantes, como o nome do canal e do cliente, que já são conhecidos no contexto da visualização."/>
+        </outline>
+    </outline>
+</outline>
+<outline text="PRÓXIMOS PASSOS DA IMPLEMENTAÇÃO: Ações futuras para completar e utilizar o sistema integrado.">
+    <outline text="Geração do calendário de conteúdo em uma ferramenta externa e subsequente cópia da tabela para o Notion."/>
+    <outline text="Cadastramento completo das informações de conteúdo seguindo a estrutura e os conformes estabelecidos."/>
+    <outline text="Implementação prática e uso efetivo do sistema integrado para a gestão de conteúdo do cliente."/>
+</outline>
+</outline>
+</body>
+</opml>
