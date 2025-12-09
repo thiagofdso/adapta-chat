@@ -40,13 +40,14 @@ def _extract_file_id(upload_info: Dict[str, any]) -> Optional[str]:
     )
 
 
-async def upload_pdf(generator: ClaudeOpusGenerator, pdf_path: Path) -> tuple[Dict, Path]:
+async def upload_pdf(generator: ClaudeOpusGenerator, source_path: Path) -> tuple[Dict, Path]:
     temp_dir = Path(tempfile.gettempdir())
-    temp_path = temp_dir / f"livro_upload_{uuid.uuid4().hex}.pdf"
-    shutil.copy2(pdf_path, temp_path)
+    ext = source_path.suffix.lower()
+    temp_path = temp_dir / f"livro_upload_{uuid.uuid4().hex}{ext}"
+    shutil.copy2(source_path, temp_path)
     upload_info = await generator.client.upload_arquivo(str(temp_path))
     if not upload_info:
-        raise RuntimeError(f"Falha ao fazer upload de {pdf_path}")
+        raise RuntimeError(f"Falha ao fazer upload de {source_path}")
     return upload_info, temp_path
 
 
@@ -64,7 +65,7 @@ async def run_dimension(
     )
 
 
-async def process_book(pdf_path: Path, generator: ClaudeOpusGenerator) -> None:
+async def process_book(pdf_path: Path, generator: ClaudeOpusGenerator, *, auto: bool = False) -> None:
     logger.info("Processando livro: {}", pdf_path.name)
     working_dir = OUTPUT_DIR / pdf_path.stem
     working_dir.mkdir(parents=True, exist_ok=True)
@@ -109,6 +110,9 @@ async def process_book(pdf_path: Path, generator: ClaudeOpusGenerator) -> None:
                     best_content = res
 
             if best_content:
+                # para dimensões 1 a 6, adiciona quebra de linha extra no fim
+                if dimension <= 6 and not best_content.endswith("\n"):
+                    best_content = best_content + "\n"
                 dim_file.write_text(best_content, encoding="utf-8")
                 logger.info("Dimensão {} finalizada (maior resposta selecionada) para {}", dimension, pdf_path.name)
                 dim_paths.append(dim_file)
@@ -124,7 +128,7 @@ async def process_book(pdf_path: Path, generator: ClaudeOpusGenerator) -> None:
                 logger.warning("Falha ao excluir arquivo remoto {}: {}", file_id, exc)
             file_id = None
 
-        confirm = input(
+        confirm = "y" if auto else input(
             f"As 7 dimensões de '{pdf_path.name}' estão geradas/atuais. "
             "Gerar o .md final e limpar os parciais? [s/N]: "
         ).strip().lower()
@@ -178,18 +182,26 @@ async def process_book(pdf_path: Path, generator: ClaudeOpusGenerator) -> None:
                 logger.info("Parciais preservados para análise de erro em {}", working_dir)
 
 
-async def main() -> None:
+async def main(auto: bool = False) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     generator = ClaudeOpusGenerator()
 
-    pdfs = sorted(p for p in SOURCE_DIR.glob("*.pdf") if p.is_file())
-    if not pdfs:
-        logger.info("Nenhum PDF encontrado em {}", SOURCE_DIR)
+    inputs = sorted(
+        p for p in SOURCE_DIR.glob("*") if p.is_file() and p.suffix.lower() in {".pdf", ".txt"}
+    )
+    if not inputs:
+        logger.info("Nenhum PDF ou TXT encontrado em {}", SOURCE_DIR)
         return
 
-    for pdf in pdfs:
-        await process_book(pdf, generator)
+    for path in inputs:
+        await process_book(path, generator, auto=auto)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Destilador v1 (GPT) - processa PDFs/TXTs em 7 dimensões.")
+    parser.add_argument("--auto", action="store_true", help="Gera consolidado automaticamente sem pedir confirmação.")
+    args = parser.parse_args()
+
+    asyncio.run(main(auto=args.auto))

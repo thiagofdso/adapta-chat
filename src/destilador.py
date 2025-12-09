@@ -17,6 +17,7 @@ from utils.logger import logger
 SOURCE_DIR = Path("livros")
 OUTPUT_DIR = Path("docs_livros")
 NUM_ITERACOES = 2  # quantas vezes cada dimensão será gerada; fica com a resposta mais longa
+UPLOAD_DELAY_SECONDS = 10.0  # delay padrão após upload
 
 PROMPTS_DIR = Path("src/prompts/livro")
 
@@ -26,11 +27,17 @@ def load_dimension_prompt(dimension: int) -> str:
         raise FileNotFoundError(f"Prompt da dimensão {dimension} não encontrado em {prompt_path}")
     return prompt_path.read_text(encoding="utf-8")
 
-async def upload_pdf(generator: Claude45SonnetGenerator, pdf_path: Path) -> tuple[Dict, Path]:
+async def upload_pdf(
+    generator: Claude45SonnetGenerator,
+    pdf_path: Path,
+    delay: float = UPLOAD_DELAY_SECONDS,
+) -> tuple[Dict, Path]:
     temp_dir = Path(tempfile.gettempdir())
-    temp_path = temp_dir / f"livro_upload_{uuid.uuid4().hex}.pdf"
+    temp_path = temp_dir / f"livro_upload_{uuid.uuid4().hex}{pdf_path.suffix.lower()}"
     shutil.copy2(pdf_path, temp_path)
     upload_info = await generator.client.upload_arquivo(str(temp_path))
+    if delay and delay > 0:
+        await asyncio.sleep(delay)
     if not upload_info:
         raise RuntimeError(f"Falha ao fazer upload de {pdf_path}")
     return upload_info, temp_path
@@ -48,7 +55,13 @@ async def run_dimension(
     return remove_think_tags(response)
 
 
-async def process_book(pdf_path: Path, generator: Claude45SonnetGenerator) -> None:
+async def process_book(
+    pdf_path: Path,
+    generator: Claude45SonnetGenerator,
+    *,
+    auto: bool = False,
+    upload_delay: float = UPLOAD_DELAY_SECONDS,
+) -> None:
     logger.info("Processando livro: {}", pdf_path.name)
     working_dir = OUTPUT_DIR / pdf_path.stem
     working_dir.mkdir(parents=True, exist_ok=True)
@@ -61,7 +74,7 @@ async def process_book(pdf_path: Path, generator: Claude45SonnetGenerator) -> No
     interrupted = False
 
     try:
-        upload_info, temp_upload_path = await upload_pdf(generator, pdf_path)
+        upload_info, temp_upload_path = await upload_pdf(generator, pdf_path, delay=upload_delay)
 
         for dimension in range(1, 8):
             prompt = load_dimension_prompt(dimension)
@@ -89,6 +102,8 @@ async def process_book(pdf_path: Path, generator: Claude45SonnetGenerator) -> No
                     best_content = res
 
             if best_content:
+                if dimension <= 6 and not best_content.endswith("\n"):
+                    best_content += "\n"
                 dim_file.write_text(best_content, encoding="utf-8")
                 logger.info("Dimensão {} finalizada (maior resposta selecionada) para {}", dimension, pdf_path.name)
                 dim_paths.append(dim_file)
@@ -109,7 +124,7 @@ async def process_book(pdf_path: Path, generator: Claude45SonnetGenerator) -> No
                     logger.warning("Falha ao excluir arquivo remoto {}: {}", remote_path, exc)
             upload_info = None
 
-        confirm = input(
+        confirm = "y" if auto else input(
             f"As 7 dimensões de '{pdf_path.name}' estão geradas/atuais. "
             "Gerar o .md final e limpar os parciais? [s/N]: "
         ).strip().lower()
@@ -170,7 +185,7 @@ async def process_book(pdf_path: Path, generator: Claude45SonnetGenerator) -> No
                 logger.info("Parciais preservados para análise de erro em {}", working_dir)
 
 
-async def main() -> None:
+async def main(auto: bool = False, upload_delay: float = UPLOAD_DELAY_SECONDS) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     generator = Claude45SonnetGenerator()
 
@@ -180,8 +195,15 @@ async def main() -> None:
         return
 
     for pdf in pdfs:
-        await process_book(pdf, generator)
+        await process_book(pdf, generator, auto=auto, upload_delay=upload_delay)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Destilador v2 (Claude 4.5) - processa PDFs em 7 dimensões.")
+    parser.add_argument("--auto", action="store_true", help="Gera consolidado automaticamente sem pedir confirmação.")
+    parser.add_argument("--upload-delay", type=float, default=UPLOAD_DELAY_SECONDS, help="Delay (s) após cada upload antes de chamar o modelo.")
+    args = parser.parse_args()
+
+    asyncio.run(main(auto=args.auto, upload_delay=args.upload_delay))
