@@ -1,0 +1,1085 @@
+CONTEXTO
+
+Você validará rigorosamente a qualidade pedagógica e técnica das perguntas criadas, identificando problemas e sugerindo correções específicas.
+
+TAREFA
+
+Analise o conjunto de perguntas segundo critérios detalhados de qualidade e forneça relatório completo com problemas identificados e JSON corrigido se necessário.
+
+PERGUNTAS PARA VALIDAÇÃO
+
+{
+  "microaula_id": "aula_01_01",
+  "titulo_microaula": "O que é uma Grand Slam Offer",
+  "conceito_principal": "Grand Slam Offer",
+  "total_perguntas": 6,
+  "perguntas": [
+    {
+      "id": "q_01",
+      "nivel_bloom": "lembrar",
+      "nivel_bloom_numero": 1,
+      "dificuldade": "facil",
+      "tipo": "multipla_escolha",
+      "enunciado": "Segundo a microaula, o que define uma Grand Slam Offer?",
+      "opcoes": [
+        {
+          "id": "a",
+          "texto": "Uma oferta com o menor preço possível do mercado",
+          "correta": false
+        },
+        {
+          "id": "b",
+          "texto": "Uma oferta tão boa que o cliente se sente estúpido ao recusá-la",
+          "correta": true
+        },
+        {
+          "id": "c",
+          "texto": "Uma oferta que inclui muitos bônus digitais gratuitos",
+          "correta": false
+        },
+        {
+          "id": "d",
+          "texto": "Uma oferta disponível apenas para os primeiros compradores",
+          "correta": false
+        }
+      ],
+      "explicacao": "A definição exata apresentada na microaula é: 'Grand Slam Offer é uma oferta tão boa que o cliente se sente estúpido ao recusá-la'. O foco está na percepção de valor absurdo, não apenas em preço baixo ou escassez.",
+      "conceito_relacionado": "Definição de Grand Slam Offer",
+      "feedback_correto": "✅ Perfeito! Você memorizou a definição central: uma oferta tão irresistível que recusá-la parece uma decisão irracional.",
+      "feedback_incorreto": "❌ Revise a seção 'Definição' da microaula. A Grand Slam Offer não se trata de ser barato, mas de ter valor percebido tão alto que o preço se torna irrelevante."
+    },
+    {
+      "id": "q_02",
+      "nivel_bloom": "lembrar",
+      "nivel_bloom_numero": 1,
+      "dificuldade": "facil",
+      "tipo": "verdadeiro_falso",
+      "enunciado": "Uma Grand Slam Offer é construída sobre três pilares: valor percebido extremamente alto, preço insignificante comparado ao valor, e eliminação completa de objeções.",
+      "opcoes": [
+        {
+          "id": "verdadeiro",
+          "texto": "Verdadeiro",
+          "correta": true
+        },
+        {
+          "id": "falso",
+          "texto": "Falso",
+          "correta": false
+        }
+      ],
+      "explicacao": "Estes são exatamente os três componentes principais apresentados na microaula que formam a estrutura de uma Grand Slam Offer eficaz.",
+      "conceito_relacionado": "Componentes da Grand Slam Offer",
+      "feedback_correto": "✅ Correto! Estes três pilares são a fundação de qualquer Grand Slam Offer. Memorizá-los é essencial para aplicar o conceito.",
+      "feedback_incorreto": "❌ Revise a seção 'Componentes Principais'. Os três pilares são fundamentais para entender como criar uma oferta irresistível."
+    },
+    {
+      "id": "q_03",
+      "nivel_bloom": "compreender",
+      "nivel_bloom_numero": 2,
+      "dificuldade": "media",
+      "tipo": "multipla_escolha",
+      "enunciado": "Por que uma Grand Slam Offer permite que você cobre preços MAIS ALTOS, não mais baixos?",
+      "opcoes": [
+        {
+          "id": "a",
+          "texto": "Porque clientes premium sempre pagam mais, independentemente do valor",
+          "correta": false
+        },
+        {
+          "id": "b",
+          "texto": "Porque o foco está no valor percebido, tirando você da competição por preço",
+          "correta": true
+        },
+        {
+          "id": "c",
+          "texto": "Porque descontos repetidos desvalorizam a marca ao longo do tempo",
+          "correta": false
+        },
+        {
+          "id": "d",
+          "texto": "Porque o mercado premium tem menos concorrentes diretos",
+          "correta": false
+        }
+      ],
+      "explicacao": "Quando o valor percebido é 10x, 20x ou 100x maior que o preço, o cliente compara o resultado com o investimento, não seu preço com a concorrência. Isso elimina a commoditização e permite margens maiores.",
+      "conceito_relacionado": "Relação entre valor percebido e preço",
+      "feedback_correto": "✅ Excelente compreensão! Você entendeu que Grand Slam Offer não é sobre descontar, mas sobre criar tanto valor que o preço se torna irrelevante na decisão.",
+      "feedback_incorreto": "❌ Releia a seção 'Ponto de Atenção' e a resposta do Checkpoint. O segredo está em fazer o cliente comparar o RESULTADO (valor) com o investimento, não comparar seu preço com concorrentes."
+    },
+    {
+      "id": "q_04",
+      "nivel_bloom": "compreender",
+      "nivel_bloom_numero": 2,
+      "dificuldade": "media",
+      "tipo": "verdadeiro_falso",
+      "enunciado": "O componente 'Eliminação completa de objeções' significa remover todas as barreiras (medos, dúvidas) que impedem a compra ANTES mesmo delas surgirem na mente do cliente.",
+      "opcoes": [
+        {
+          "id": "verdadeiro",
+          "texto": "Verdadeiro",
+          "correta": true
+        },
+        {
+          "id": "falso",
+          "texto": "Falso",
+          "correta": false
+        }
+      ],
+      "explicacao": "A microaula explica que 'Todos os medos, dúvidas e barreiras que impedem a compra são antecipados e neutralizados na própria oferta'. O exemplo da Grand Slam Offer inclui garantia de 180 dias justamente para eliminar o medo de não funcionar.",
+      "conceito_relacionado": "Eliminação completa de objeções",
+      "feedback_correto": "✅ Perfeito! Você compreendeu que antecipar objeções é mais poderoso do que respondê-las depois. A oferta já traz as respostas embutidas.",
+      "feedback_incorreto": "❌ Revise o terceiro componente principal e observe no exemplo prático como a garantia de 180 dias, o suporte 1-on-1 e outros elementos neutralizam objeções antes mesmo do cliente verbalizá-las."
+    },
+    {
+      "id": "q_05",
+      "nivel_bloom": "aplicar",
+      "nivel_bloom_numero": 3,
+      "dificuldade": "media",
+      "tipo": "multipla_escolha",
+      "enunciado": "Você vende consultoria empresarial por R$ 5.000. Qual mudança transformaria sua oferta em uma Grand Slam Offer?",
+      "opcoes": [
+        {
+          "id": "a",
+          "texto": "Reduzir o preço para R$ 2.500 e oferecer desconto de 50% para os primeiros 10 clientes",
+          "correta": false
+        },
+        {
+          "id": "b",
+          "texto": "Incluir garantia de ROI de 3x em 90 dias ou devolução + bônus de R$ 2.000, adicionar acompanhamento semanal ilimitado, e entregar templates proprietários avaliados em R$ 15.000",
+          "correta": true
+        },
+        {
+          "id": "c",
+          "texto": "Criar um site mais bonito com depoimentos de clientes e certificações profissionais",
+          "correta": false
+        },
+        {
+          "id": "d",
+          "texto": "Adicionar 5 e-books gratuitos sobre gestão empresarial como bônus",
+          "correta": false
+        }
+      ],
+      "explicacao": "A opção B aplica os três pilares: (1) Valor extremamente alto com templates de R$ 15k + acompanhamento ilimitado, (2) Garantia de ROI 3x torna preço insignificante, (3) Garantia reversa + suporte elimina objeções de risco e tempo. Compare com o exemplo da microaula.",
+      "conceito_relacionado": "Aplicação dos três componentes na prática",
+      "feedback_correto": "✅ Excelente aplicação! Você identificou que aumentar valor percebido + eliminar risco é mais poderoso que descontar preço. Isso é pensar em Grand Slam Offer.",
+      "feedback_incorreto": "❌ Revise o 'Exemplo Prático' e compare as duas ofertas. Note como a Grand Slam Offer empilha valor massivo e elimina objeções, não apenas reduz preço ou adiciona bônus genéricos."
+    },
+    {
+      "id": "q_06",
+      "nivel_bloom": "aplicar",
+      "nivel_bloom_numero": 3,
+      "dificuldade": "dificil",
+      "tipo": "multipla_escolha",
+      "enunciado": "Um cliente te diz: 'Sua oferta está muito cara, o concorrente cobra R$ 200 a menos'. Aplicando o conceito de Grand Slam Offer, qual é a resposta CORRETA?",
+      "opcoes": [
+        {
+          "id": "a",
+          "texto": "Igualar o preço do concorrente para não perder a venda",
+          "correta": false
+        },
+        {
+          "id": "b",
+          "texto": "Demonstrar que minha oferta entrega 10x mais valor, eliminando a comparação por preço",
+          "correta": true
+        },
+        {
+          "id": "c",
+          "texto": "Oferecer um desconto de 10% para fechar o negócio imediatamente",
+          "correta": false
+        },
+        {
+          "id": "d",
+          "texto": "Explicar que meus custos são maiores e por isso o preço é mais alto",
+          "correta": false
+        }
+      ],
+      "explicacao": "Se o cliente compara preços, sua oferta ainda não é uma Grand Slam Offer. A solução não é descontar, mas aumentar o valor percebido até que o preço se torne irrelevante. Quando você demonstra valor 10x maior, o cliente para de comparar preços.",
+      "conceito_relacionado": "Escapar da competição por preço através do valor",
+      "feedback_correto": "✅ Perfeito! Você aplicou o princípio-chave: Grand Slam Offer elimina comparação por preço porque o valor é tão desproporcional que torna a escolha óbvia. Você saiu da commoditização.",
+      "feedback_incorreto": "❌ Releia o 'Ponto de Atenção' e a resposta do Checkpoint. Quando sua oferta pode ser comparada por preço, ela NÃO é uma Grand Slam Offer. A solução é aumentar valor percebido, não reduzir preço."
+    },
+    {
+      "id": "q_07",
+      "nivel_bloom": "analisar",
+      "nivel_bloom_numero": 4,
+      "dificuldade": "dificil",
+      "tipo": "multipla_escolha",
+      "enunciado": "Analise as duas ofertas abaixo. Qual é a principal diferença que torna uma delas uma Grand Slam Offer? OFERTA A: 'Curso online de inglês - 50 aulas em vídeo - R$ 297' | OFERTA B: 'Fale inglês fluente em 6 meses ou 12 meses grátis - 50 aulas + 1 aula ao vivo semanal com professor nativo + app de conversação com IA disponível 24h + certificação internacional inclusa + garantia de 1 ano - R$ 897'",
+      "opcoes": [
+        {
+          "id": "a",
+          "texto": "A Oferta B tem preço mais alto, o que transmite mais valor e credibilidade",
+          "correta": false
+        },
+        {
+          "id": "b",
+          "texto": "A Oferta B empilha valor massivo (aulas ao vivo, app IA, certificação) e elimina objeções (garantia de resultado + 1 ano sem risco), tornando o preço irrelevante",
+          "correta": true
+        },
+        {
+          "id": "c",
+          "texto": "A Oferta A é mais simples e direta, facilitando a decisão de compra",
+          "correta": false
+        },
+        {
+          "id": "d",
+          "texto": "A Oferta B tem mais bônus digitais, o que sempre aumenta conversão",
+          "correta": false
+        }
+      ],
+      "explicacao": "A Oferta A compete por preço (commoditização). A Oferta B aplica os três pilares: (1) Valor massivo com suporte ao vivo + IA + certificação, (2) Garantia de resultado torna R$ 897 insignificante comparado ao benefício de fluência, (3) Garantia de 1 ano elimina risco. O cliente pensa: 'Se não funcionar, ganho 12 meses grátis. Seria burrice não tentar'.",
+      "conceito_relacionado": "Análise comparativa de ofertas comuns vs Grand Slam Offer",
+      "feedback_correto": "✅ Análise perfeita! Você identificou que Grand Slam Offer não é sobre ter 'mais coisas', mas sobre empilhar valor estratégico que elimina objeções e torna o preço irrelevante na decisão.",
+      "feedback_incorreto": "❌ Compare novamente com o exemplo prático da microaula. A diferença não está no preço alto nem na quantidade de bônus, mas em COMO o valor é estruturado para eliminar resistência e fazer a escolha parecer óbvia."
+    }
+  ],
+  "distribuicao_niveis": {
+    "lembrar": 2,
+    "compreender": 2,
+    "aplicar": 2,
+    "analisar": 1,
+    "avaliar": 0,
+    "criar": 0
+  },
+  "distribuicao_formatos": {
+    "multipla_escolha": 5,
+    "verdadeiro_falso": 2,
+    "resposta_curta": 0
+  },
+  "criterios_aprovacao": {
+    "nota_minima_percentual": 70,
+    "perguntas_minimas_corretas": 5,
+    "recomendacao_revisao": "Se errar mais de 2 perguntas, revise a microaula antes de prosseguir. Foque especialmente nos três componentes principais e no exemplo prático de comparação entre oferta comum e Grand Slam Offer."
+  }
+}
+
+INSTRUÇÕES DETALHADAS
+
+VALIDAÇÃO 1: ALINHAMENTO PEDAGÓGICO
+
+1.1 COBERTURA DE OBJETIVOS DE APRENDIZADO
+
+O que verificar:
+
+Todas as perguntas avaliam os objetivos de aprendizado declarados na aula.
+
+Como validar:
+
+Liste todos os objetivos de aprendizado da aula
+
+
+Para cada objetivo, identifique quais perguntas o avaliam
+
+
+Verifique se cada objetivo tem pelo menos 1 pergunta
+
+Se encontrar problemas:
+
+Severidade: ALTO
+
+
+Problema: "Objetivo '[texto do objetivo]' não é avaliado por nenhuma pergunta"
+
+
+Correção: "Criar 1-2 perguntas que avaliem especificamente este objetivo"
+
+Exemplo de análise:
+
+`
+
+Objetivo 1: "Explicar o que são variáveis e para que servem"
+
+Perguntas que avaliam: q_01, q_03, q_05 ✅
+
+Objetivo 2: "Identificar diferentes tipos de variáveis (int, float, string, bool)"
+
+Perguntas que avaliam: q_02, q_04, q_07, q_11 ✅
+
+Objetivo 3: "Aplicar variáveis em programas simples"
+
+Perguntas que avaliam: (nenhuma) ❌
+
+PROBLEMA IDENTIFICADO
+
+`
+
+1.2 DISTRIBUIÇÃO POR NÍVEIS DE BLOOM
+
+O que verificar:
+
+Distribuição de perguntas por níveis cognitivos está dentro dos percentuais esperados.
+
+Distribuição esperada:
+
+Lembrar (Nível 1): 20% ± 5%
+
+
+Compreender (Nível 2): 25% ± 5%
+
+
+Aplicar (Nível 3): 25% ± 5%
+
+
+Analisar (Nível 4): 15% ± 5%
+
+
+Avaliar (Nível 5): 10% ± 5%
+
+
+Criar (Nível 6): 5% ± 5%
+
+Como validar:
+
+Conte perguntas em cada nível
+
+
+Calcule percentual: (perguntas do nível / total) × 100
+
+
+Compare com percentual esperado
+
+Se encontrar problemas:
+
+Severidade: MÉDIO (se diferença < 10%), ALTO (se diferença ≥ 10%)
+
+
+Problema: "Nível X tem Y% das perguntas (esperado: Z%)"
+
+
+Correção: "Adicionar/remover/reclassificar perguntas para equilibrar"
+
+Exemplo:
+
+`
+
+Total de perguntas: 12
+
+Lembrar: 4 perguntas (33%) - Esperado: 20%
+
+PROBLEMA: 13% acima do esperado ⚠️ MÉDIO
+
+Aplicar: 1 pergunta (8%) - Esperado: 25%
+
+PROBLEMA: 17% abaixo do esperado ❌ ALTO
+
+Correção: Reclassificar 1 pergunta de "Lembrar" para "Aplicar" e criar 1 nova pergunta de "Aplicar"
+
+`
+
+1.3 COBERTURA DE CONCEITOS-CHAVE
+
+O que verificar:
+
+Todos os conceitos-chave da aula são avaliados.
+
+Como validar:
+
+Liste todos os conceitos-chave da aula
+
+
+Para cada conceito, identifique perguntas que o avaliam
+
+
+Verifique se conceitos importantes têm múltiplas perguntas
+
+Se encontrar problemas:
+
+Severidade: ALTO (conceito não avaliado), MÉDIO (conceito com apenas 1 pergunta)
+
+
+Problema: "Conceito '[nome]' não é avaliado por nenhuma pergunta"
+
+
+Correção: "Criar pergunta que avalie este conceito"
+
+VALIDAÇÃO 2: QUALIDADE TÉCNICA
+
+2.1 CLAREZA DOS ENUNCIADOS
+
+O que verificar:
+
+Enunciados são claros, diretos e sem ambiguidade.
+
+Como validar:
+
+Para cada pergunta, pergunte:
+
+O enunciado é uma frase completa e gramaticalmente correta?
+
+
+É possível entender o que está sendo perguntado sem reler?
+
+
+Há apenas uma interpretação possível?
+
+
+Não há informação desnecessária?
+
+Problemas comuns:
+
+Enunciado muito longo ou verboso
+
+
+Múltiplas perguntas em um enunciado
+
+
+Ambiguidade na formulação
+
+
+Erros gramaticais
+
+Se encontrar problemas:
+
+Severidade: MÉDIO
+
+
+Problema: "Enunciado da pergunta X é ambíguo/confuso/verboso"
+
+
+Correção: "Reescrever como: [versão corrigida]"
+
+Exemplo:
+
+`
+
+❌ PROBLEMA:
+
+"Considerando o que foi explicado sobre variáveis e seus tipos, e pensando nas situações práticas onde você precisaria armazenar dados, qual das opções abaixo você acha que seria mais adequada para guardar a informação de idade?"
+
+✅ CORREÇÃO:
+
+"Qual tipo de variável é mais adequado para armazenar a idade de uma pessoa?"
+
+`
+
+2.2 QUALIDADE DOS DISTRATORES (Múltipla Escolha)
+
+O que verificar:
+
+Opções incorretas são plausíveis e representam erros comuns.
+
+Como validar:
+
+Para cada pergunta de múltipla escolha:
+
+Distratores parecem corretos para quem não estudou?
+
+
+Representam erros comuns ou misconceptions?
+
+
+Não são obviamente absurdos?
+
+
+Não contêm pistas linguísticas (sempre, nunca, etc.)?
+
+Problemas comuns:
+
+Distratores absurdos ou nonsense
+
+
+Distratores que não fazem sentido no contexto
+
+
+Uma opção muito mais longa/curta que as outras
+
+
+Padrões linguísticos que denunciam a correta
+
+Se encontrar problemas:
+
+Severidade: MÉDIO
+
+
+Problema: "Distrator '[texto]' na pergunta X não é plausível"
+
+
+Correção: "Substituir por: [distrator plausível]"
+
+Exemplo:
+
+`
+
+❌ PROBLEMA:
+
+Qual tipo armazena texto?
+
+a) string ✓
+
+b) banana
+
+c) 12345
+
+d) !!!
+
+Distratores não são plausíveis.
+
+✅ CORREÇÃO:
+
+Qual tipo armazena texto?
+
+a) string ✓
+
+b) text (não existe em Python, mas parece lógico)
+
+c) char (existe em outras linguagens)
+
+d) str (abreviação comum, mas Python usa 'string')
+
+`
+
+2.3 AUSÊNCIA DE PISTAS LINGUÍSTICAS
+
+O que verificar:
+
+Não há pistas que denunciem a resposta correta.
+
+Pistas comuns a evitar:
+
+Resposta correta é sempre a mais longa
+
+
+Resposta correta usa linguagem mais técnica/formal
+
+
+Resposta correta é a única com qualificadores ("geralmente", "na maioria")
+
+
+Distratores usam absolutos ("sempre", "nunca", "apenas")
+
+
+Resposta correta é sempre na posição B ou C
+
+Como validar:
+
+Verifique tamanho das opções (devem ser similares)
+
+
+Verifique linguagem (mesmo nível de formalidade)
+
+
+Verifique posição das corretas (deve variar)
+
+Se encontrar problemas:
+
+Severidade: BAIXO
+
+
+Problema: "Pergunta X tem pista linguística: [descrição]"
+
+
+Correção: "Reescrever opções para remover pista"
+
+2.4 QUALIDADE DAS EXPLICAÇÕES
+
+O que verificar:
+
+Explicações são formativas (ensinam) e não apenas confirmativas.
+
+Características de boa explicação:
+
+Explica por que a correta está certa
+
+
+Explica por que as incorretas estão erradas
+
+
+Adiciona informação além da pergunta
+
+
+Usa linguagem clara
+
+
+Tem 2-4 frases
+
+Como validar:
+
+Para cada pergunta, verifique se a explicação:
+
+Vai além de "A resposta é X"
+
+
+Ensina algo novo ou reforça conceito
+
+
+Ajudaria aluno que errou a entender
+
+Se encontrar problemas:
+
+Severidade: MÉDIO
+
+
+Problema: "Explicação da pergunta X é apenas confirmativa, não formativa"
+
+
+Correção: "Expandir explicação para: [versão melhorada]"
+
+Exemplo:
+
+`
+
+❌ EXPLICAÇÃO RUIM:
+
+"A resposta correta é C."
+
+✅ EXPLICAÇÃO FORMATIVA:
+
+"A resposta correta é C) string. Strings são usadas para armazenar texto (sequências de caracteres) em Python. As outras opções estão incorretas: int armazena números inteiros, float armazena números decimais, e bool armazena apenas True ou False."
+
+`
+
+VALIDAÇÃO 3: DIVERSIDADE
+
+3.1 VARIEDADE DE FORMATOS
+
+O que verificar:
+
+Há variedade de formatos de pergunta.
+
+Distribuição esperada:
+
+Múltipla escolha: 60%
+
+
+Verdadeiro/Falso: 20%
+
+
+Resposta curta: 10%
+
+
+Correspondência: 10%
+
+Como validar:
+
+Conte perguntas de cada formato
+
+
+Calcule percentuais
+
+
+Compare com esperado
+
+Se encontrar problemas:
+
+Severidade: BAIXO
+
+
+Problema: "Formato X representa Y% (esperado: Z%)"
+
+
+Correção: "Converter perguntas entre formatos para equilibrar"
+
+3.2 VARIEDADE DE CONTEXTOS
+
+O que verificar:
+
+Perguntas usam diferentes contextos e exemplos (não repetitivos).
+
+Como validar:
+
+Verifique se múltiplas perguntas usam exatamente os mesmos exemplos
+
+
+Verifique se há variedade de cenários (prático, teórico, código, conceitual)
+
+Se encontrar problemas:
+
+Severidade: BAIXO
+
+
+Problema: "Perguntas X, Y e Z usam o mesmo exemplo repetidamente"
+
+
+Correção: "Variar exemplos e contextos"
+
+3.3 NÍVEIS DE DIFICULDADE BALANCEADOS
+
+O que verificar:
+
+Há mix de perguntas fáceis, médias e difíceis.
+
+Distribuição esperada:
+
+Fácil: 30-40%
+
+
+Médio: 40-50%
+
+
+Difícil: 20-30%
+
+Como validar:
+
+Verifique campo "dificuldade" de cada pergunta
+
+
+Calcule distribuição
+
+
+Verifique se dificuldade corresponde ao nível de Bloom:
+
+Lembrar/Compreender → geralmente Fácil
+
+
+Aplicar/Analisar → geralmente Médio
+
+
+Avaliar/Criar → geralmente Difícil
+
+Se encontrar problemas:
+
+Severidade: BAIXO
+
+
+Problema: "Todas as perguntas são fáceis/difíceis"
+
+
+Correção: "Adicionar perguntas de outros níveis de dificuldade"
+
+VALIDAÇÃO 4: QUALIDADE DO FEEDBACK
+
+4.1 FEEDBACK CORRETO
+
+O que verificar:
+
+Feedback para resposta correta reforça positivamente e consolida aprendizado.
+
+Características de bom feedback correto:
+
+Começa com reforço positivo ("Excelente!", "Correto!", "Muito bem!")
+
+
+Reafirma o conceito brevemente
+
+
+Tem 1-2 frases
+
+Como validar:
+
+Para cada pergunta, verifique se feedback_correto:
+
+Tem reforço positivo
+
+
+Reafirma conceito
+
+
+Não é genérico demais ("Correto!")
+
+Se encontrar problemas:
+
+Severidade: BAIXO
+
+
+Problema: "Feedback correto da pergunta X é genérico"
+
+
+Correção: "Melhorar para: [versão específica]"
+
+Exemplo:
+
+`
+
+❌ GENÉRICO:
+
+"Correto!"
+
+✅ ESPECÍFICO:
+
+"Excelente! Você identificou corretamente que string é o tipo usado para armazenar texto em Python."
+
+`
+
+4.2 FEEDBACK INCORRETO
+
+O que verificar:
+
+Feedback para resposta incorreta orienta para revisão sem desencorajar.
+
+Características de bom feedback incorreto:
+
+Não usa linguagem negativa demais
+
+
+Indica onde revisar
+
+
+Dá dica para encontrar resposta correta
+
+
+Tem 2-3 frases
+
+Como validar:
+
+Para cada pergunta, verifique se feedback_incorreto:
+
+Não é desencorajador
+
+
+Direciona para seção específica da aula
+
+
+Fornece dica útil
+
+Se encontrar problemas:
+
+Severidade: BAIXO
+
+
+Problema: "Feedback incorreto da pergunta X não orienta para revisão"
+
+
+Correção: "Melhorar para: [versão que orienta]"
+
+Exemplo:
+
+`
+
+❌ DESENCORAJADOR:
+
+"Errado! Você não entendeu nada."
+
+✅ ORIENTADOR:
+
+"Não exatamente. Revise a seção 'Tipos de Variáveis' na aula. Lembre-se: string é para texto, int para números inteiros. Tente novamente!"
+
+`
+
+FORMATO DO RELATÓRIO
+
+`markdown
+
+RELATÓRIO DE VALIDAÇÃO - PERGUNTAS DE MICROAPRENDIZADO
+
+RESUMO EXECUTIVO
+
+Aula: [ID e título da aula]  
+
+Total de Perguntas: X  
+
+Status Geral: ✅ APROVADO / ⚠️ APROVADO COM RESSALVAS / ❌ REPROVADO
+
+Problemas Encontrados:
+
+Críticos: X
+
+
+Altos: X
+
+
+Médios: X
+
+
+Baixos: X
+
+Recomendação: [Pode usar as perguntas / Necessita correções antes de usar]
+
+
+VALIDAÇÃO DE ALINHAMENTO PEDAGÓGICO
+
+2.1 Cobertura de Objetivos de Aprendizado
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+[Para cada objetivo:]
+
+Objetivo 1: "[texto]"
+
+Perguntas que avaliam: q_01, q_03, q_05 ✅
+
+[Se houver problemas:]
+
+❌ ALTO: Objetivo "[texto]" não é avaliado
+
+Correção: Criar pergunta que avalie este objetivo
+
+2.2 Distribuição por Níveis de Bloom
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+Distribuição Atual:
+
+| Compreender | 25% | X% | ✅/⚠️/❌ |
+
+| Analisar | 15% | X% | ✅/⚠️/❌ |
+
+| Criar | 5% | X% | ✅/⚠️/❌ |
+
+[Se houver problemas, liste correções necessárias]
+
+2.3 Cobertura de Conceitos-Chave
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+[Para cada conceito:]
+
+Conceito 1: "[nome]"
+
+Perguntas que avaliam: q_02, q_07 ✅
+
+[Se houver problemas, liste]
+
+
+VALIDAÇÃO DE QUALIDADE TÉCNICA
+
+3.1 Clareza dos Enunciados
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+Problemas Encontrados: X
+
+[Para cada problema:]
+
+⚠️ MÉDIO - Pergunta q_05:
+
+Problema: Enunciado é verboso e confuso
+
+
+Enunciado atual: "[texto]"
+
+
+Correção: "[versão corrigida]"
+
+3.2 Qualidade dos Distratores
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+[Liste problemas se houver]
+
+3.3 Ausência de Pistas Linguísticas
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+[Liste problemas se houver]
+
+3.4 Qualidade das Explicações
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+[Liste problemas se houver]
+
+
+VALIDAÇÃO DE DIVERSIDADE
+
+4.1 Variedade de Formatos
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+Distribuição Atual:
+
+| Verdadeiro/Falso | 20% | X% | ✅/⚠️/❌ |
+
+| Correspondência | 10% | X% | ✅/⚠️/❌ |
+
+4.2 Variedade de Contextos
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+4.3 Níveis de Dificuldade Balanceados
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+Distribuição:
+
+Fácil: X% (esperado: 30-40%)
+
+
+Médio: X% (esperado: 40-50%)
+
+
+Difícil: X% (esperado: 20-30%)
+
+
+VALIDAÇÃO DE FEEDBACK
+
+5.1 Feedback Correto
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+[Liste problemas se houver]
+
+5.2 Feedback Incorreto
+
+Status: ✅ OK / ⚠️ ATENÇÃO / ❌ FALHOU
+
+[Liste problemas se houver]
+
+
+LISTA CONSOLIDADA DE CORREÇÕES
+
+Correções Críticas (obrigatórias):
+
+[Se houver]
+
+Correções Altas (fortemente recomendadas):
+
+[Descrição detalhada com localização]
+
+
+[Descrição detalhada com localização]
+
+Correções Médias (recomendadas):
+
+[Descrição]
+
+
+[Descrição]
+
+Melhorias Sugeridas (opcionais):
+
+[Descrição]
+
+
+[Descrição]
+
+
+JSON CORRIGIDO
+
+[Se houver problemas críticos ou altos, forneça JSON completo corrigido]
+
+[Se não houver problemas críticos/altos:]
+
+Não é necessário fornecer JSON corrigido. As perguntas estão aprovadas para uso.
+
+
+PRÓXIMOS PASSOS
+
+[Baseado nos problemas:]
+
+✅ Perguntas aprovadas, pode prosseguir
+
+
+⚠️ Fazer correções recomendadas antes de usar
+
+
+❌ Fazer correções críticas obrigatoriamente antes de usar
+
+`
+
+REGRAS IMPORTANTES
+
+Seja rigoroso mas justo
+
+
+Sempre indique localização exata (ID da pergunta)
+
+
+Sempre forneça correção específica, não apenas aponte problema
+
+
+Verifique TODAS as validações, não pare na primeira
+
+
+Se fornecer JSON corrigido, ele deve estar 100% funcional
+
+
+Use tabelas para apresentar distribuições numericamente
+
+
+Seja construtivo: foque em como melhorar
+
+OUTPUT
+
+Forneça o relatório completo seguindo exatamente o formato especificado.
+
+Se houver problemas críticos ou altos, forneça também o JSON completo corrigido.
