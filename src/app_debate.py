@@ -189,6 +189,8 @@ def main():
         st.session_state.agent_memories = {}
         st.session_state.conversation_histories = {}
         st.session_state.internet_access = False
+        st.session_state.round_responses = {}
+        st.session_state.round_view_force_to = None
 
     base_generators = initialize_base_generators()
 
@@ -310,6 +312,9 @@ def main():
                     if hasattr(st.session_state.manager_agent, "generate_chat_id")
                     else None
                 )
+                st.session_state.round_responses = {}
+                st.session_state.round_view_force_to = None
+                st.session_state.pop("round_navigation_slider", None)
                 st.rerun()
             else:
                 st.warning("Please enter a problem or topic.")
@@ -360,12 +365,46 @@ def main():
             results = await asyncio.gather(*tasks, return_exceptions=True)
             return results
 
+        def render_round_navigation():
+            """Render slider to explore past round responses."""
+            round_responses = st.session_state.get("round_responses", {})
+            if not round_responses:
+                return
+
+            st.divider()
+            st.subheader("Navigator de Rounds")
+
+            available_rounds = sorted(round_responses.keys())
+            force_target = st.session_state.get("round_view_force_to")
+            if force_target is not None:
+                st.session_state["round_navigation_slider"] = force_target
+                st.session_state.round_view_force_to = None
+            elif "round_navigation_slider" not in st.session_state:
+                st.session_state["round_navigation_slider"] = available_rounds[-1]
+
+            selected_round = st.select_slider(
+                "Selecione um round para visualizar as respostas:",
+                options=available_rounds,
+                format_func=lambda r: f"Round {r}",
+                key="round_navigation_slider",
+            )
+
+            selected_responses = round_responses.get(selected_round, {})
+            nav_columns = st.columns(st.session_state.num_agents)
+            for i, agent_name in enumerate(st.session_state.worker_agents.keys()):
+                response_text = selected_responses.get(agent_name, "_Sem resposta registrada para este round._")
+                model_name = st.session_state.worker_agents[agent_name][0]
+                with nav_columns[i]:
+                    st.info(f"**{agent_name} ({model_name}) — Round {selected_round}**")
+                    st.markdown(response_text)
+
         # --- Execute the round and display results ---
         with st.spinner(f"Round {st.session_state.current_round} in progress... Agents are thinking..."):
             loop = get_shared_loop()
             asyncio.set_event_loop(loop)
             all_responses = loop.run_until_complete(run_debate_round())
         agent_columns = st.columns(st.session_state.num_agents)
+        current_round_responses = {}
 
         for i, (agent_name, response) in enumerate(zip(st.session_state.worker_agents.keys(), all_responses)):
             with agent_columns[i]:
@@ -388,8 +427,12 @@ def main():
                     error_message = f"{agent_name} returned an empty response."
                     st.warning(error_message)
                     st.session_state.agent_memories[agent_name] = error_message
+                current_round_responses[agent_name] = st.session_state.agent_memories[agent_name]
 
         st.success(f"Round {st.session_state.current_round} complete.")
+        st.session_state.round_responses[st.session_state.current_round] = current_round_responses
+        st.session_state.round_view_force_to = st.session_state.current_round
+        render_round_navigation()
 
         # --- Round Progression and Conclusion ---
         if st.session_state.current_round < st.session_state.num_rounds:

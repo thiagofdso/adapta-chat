@@ -109,6 +109,7 @@ class AdaptaClientV2:
 
         self._transport = transport
         self._client: Optional[httpx.AsyncClient] = None
+        self._client_loop: Optional[asyncio.AbstractEventLoop] = None
         self._session_id: Optional[str] = None
         self._auth_cookies: Dict[str, str] = {}
         self._bearer_token: Optional[str] = None
@@ -140,6 +141,7 @@ class AdaptaClientV2:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
         self._client = None
+        self._client_loop = None
 
     async def simulate_login(self) -> AuthResult:
         """Executa o fluxo mínimo necessário para autenticar o usuário."""
@@ -699,11 +701,14 @@ class AdaptaClientV2:
         raise FileNotFoundError(f"Arquivo nao encontrado: {file_path}")
 
     async def _ensure_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            if self._client is not None:
+        current_loop = asyncio.get_running_loop()
+        if self._client is not None:
+            if self._client.is_closed or self._client_loop is None or self._client_loop is not current_loop:
                 await self._client.aclose()
+                self._client = None
+                self._client_loop = None
 
-            # Streaming do chat pode levar tempo; ampliamos tempo total/leitura (dobrado).
+        if self._client is None:
             timeout = httpx.Timeout(timeout=1200.0, connect=15.0, read=1200.0)
             headers = {
                 "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -717,6 +722,7 @@ class AdaptaClientV2:
                 headers=headers,
                 transport=self._transport,
             )
+            self._client_loop = current_loop
 
         return self._client
 
@@ -1034,6 +1040,7 @@ class AdaptaClientV2:
         stream_url = f"{AGENT_BASE_URL}/api/chat/stream/v1"
         thought_parts: List[str] = []
         self._last_thought = None
+        pending_surrogate: Optional[str] = None
         try:
             async with client.stream("POST", stream_url, headers=headers, json=payload) as response:
                 response.raise_for_status()
@@ -1046,6 +1053,9 @@ class AdaptaClientV2:
                         continue
 
                     if payload_str == "[DONE]":
+                        if pending_surrogate is not None:
+                            yield ("answer", "\uFFFD")
+                            pending_surrogate = None
                         if include_tool_events:
                             yield ("answer_end", "")
                         break
@@ -1085,14 +1095,20 @@ class AdaptaClientV2:
                     if event_type == "text-delta":
                         delta = event.get("delta")
                         if isinstance(delta, str) and delta:
-                            yield ("answer", delta)
+                            safe_text, pending_surrogate = self._coalesce_surrogates(delta, pending_surrogate)
+                            if safe_text:
+                                yield ("answer", safe_text)
                         continue
 
                     if event_type == "text-end":
+                        if pending_surrogate is not None:
+                            yield ("answer", "\uFFFD")
+                            pending_surrogate = None
                         if include_tool_events:
                             yield ("answer_end", "")
                         continue
         finally:
+            pending_surrogate = None
             print("")
             #if analytics_tasks:
                 #await asyncio.gather(*analytics_tasks, return_exceptions=True)
@@ -1101,6 +1117,63 @@ class AdaptaClientV2:
             self._last_thought = "\n\n".join(thought_parts).strip()
         else:
             self._last_thought = None
+
+    def _coalesce_surrogates(
+        self,
+        chunk: str,
+        pending: Optional[str],
+    ) -> Tuple[str, Optional[str]]:
+        """Agrupa pares surrogates antes de devolver o trecho ao chamador."""
+        safe_parts: List[str] = []
+        index = 0
+
+        if pending is not None:
+            if chunk and self._is_low_surrogate(chunk[0]):
+                safe_parts.append(self._surrogate_pair_to_char(pending, chunk[0]))
+                index = 1
+                pending = None
+            else:
+                safe_parts.append("\uFFFD")
+                pending = None
+
+        while index < len(chunk):
+            char = chunk[index]
+            if self._is_high_surrogate(char):
+                if index + 1 < len(chunk):
+                    nxt = chunk[index + 1]
+                    if self._is_low_surrogate(nxt):
+                        safe_parts.append(self._surrogate_pair_to_char(char, nxt))
+                        index += 2
+                        continue
+                    safe_parts.append("\uFFFD")
+                    index += 1
+                    continue
+                pending = char
+                index += 1
+                continue
+
+            if self._is_low_surrogate(char):
+                safe_parts.append("\uFFFD")
+                index += 1
+                continue
+
+            safe_parts.append(char)
+            index += 1
+
+        return ("".join(safe_parts), pending)
+
+    @staticmethod
+    def _is_high_surrogate(char: str) -> bool:
+        return 0xD800 <= ord(char) <= 0xDBFF
+
+    @staticmethod
+    def _is_low_surrogate(char: str) -> bool:
+        return 0xDC00 <= ord(char) <= 0xDFFF
+
+    @staticmethod
+    def _surrogate_pair_to_char(high: str, low: str) -> str:
+        code_point = 0x10000 + ((ord(high) - 0xD800) << 10) + (ord(low) - 0xDC00)
+        return chr(code_point)
 
     def _prepare_messages_payload(
         self,
@@ -1630,4 +1703,3 @@ async def _main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(_main())
-

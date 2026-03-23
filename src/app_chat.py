@@ -19,6 +19,19 @@ from utils.logger import logger
 
 nest_asyncio.apply()
 
+
+def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
+    loop = st.session_state.get("_shared_async_loop")
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        st.session_state["_shared_async_loop"] = loop
+    return loop
+
+
+def run_async_task(coro):
+    loop = _get_or_create_event_loop()
+    return loop.run_until_complete(coro)
+
 # Page configuration
 st.set_page_config(page_title="Adapta.one Chat", layout="wide")
 
@@ -61,7 +74,7 @@ def main():
             if current_chat:
                 try:
                     client = get_shared_client()
-                    asyncio.run(client.excluir_chat(current_chat))
+                    run_async_task(client.excluir_chat(current_chat))
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Falha ao excluir chat remoto {}: {}", current_chat, exc)
             st.session_state.messages = []
@@ -96,7 +109,7 @@ def main():
                 if st.session_state.current_chat_id is None:
                     st.session_state.current_chat_id = selected_generator.generate_chat_id()
 
-                response = asyncio.run(
+                response = run_async_task(
                     selected_generator.call_model_with_messages(
                         st.session_state.messages,
                         chat_id=st.session_state.current_chat_id,
