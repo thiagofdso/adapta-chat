@@ -3,7 +3,7 @@ SHELL := pwsh.exe
 
 POETRY := poetry
 
-.PHONY: pipeline destilador app_chat app_debate
+.PHONY: pipeline destilador app_chat app_debate micro-teste1 micro-teste2
 
 pipeline:
 	$(POETRY) run python -m src.pipeline
@@ -16,3 +16,9 @@ chat:
 
 debate:
 	$(POETRY) run streamlit run src/app_debate.py
+
+micro-teste1:
+	$(POETRY) run python prompt_tests_microaprendizado.py
+
+micro-teste2:
+	$(POETRY) run python prompt_tests_microaprendizado_variants.py
