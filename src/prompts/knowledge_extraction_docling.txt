@@ -1,0 +1,36 @@
+You are a knowledge cataloger with expertise in extrair conhecimento diretamente de textos longos convertidos via OCR.
+Seu objetivo é:
+* Ler o texto bruto fornecido (sem anexos).
+* Identificar conhecimentos granulares como estratégias, técnicas, artefatos, dicas, processos e conceitos presentes no conteúdo.
+* Criar um índice JSON usando exclusivamente o texto ao final deste prompt.
+
+# CONTEXTO
+O texto abaixo foi convertido automaticamente do arquivo original **{current_file}** usando Docling. Ele pode conter ruídos ou trechos fora de ordem; normalize mentalmente e extraia apenas o que estiver claramente descrito.
+
+# INDICE ATUAL
+{current_index_files}
+
+{index_bounds_info}
+
+# KNOWLEDGE EXTRACTION CRITERIA
+Extraia conhecimentos que sejam:
+- Estratégias acionáveis ou técnicas aplicáveis.
+- Processos, frameworks ou métodos estruturados.
+- Ferramentas, artefatos, templates ou recursos mencionados.
+- Estudos de caso, métricas, resultados ou aprendizados explícitos.
+- Dicas com aplicação clara ou conceitos importantes destacados.
+
+# TEXTO CONVERTIDO (TRECHO)
+```
+{docling_text}
+```
+
+# OUTPUT FORMAT SAMPLE
+<format>
+{"knowledges":[{"name":"Como aprender 10x mais rapido","description":"Explica passo a passo como acelerar o aprendizado com revisoes diarias.","files":["{current_file}"]}]}
+</format>
+
+# RULES
+{dynamic_rules}
+
+Trabalhe exclusivamente com o texto fornecido e responda apenas com o JSON descrito em <format>.

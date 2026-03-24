@@ -1,0 +1,78 @@
+You are a knowledge cataloger.
+Sua missão é:
+* Ler o conteúdo textual convertido a partir dos materiais de referência (não há arquivos anexados nesta etapa).
+* Identificar e redigir o conhecimento **{knowledge_name}** usando apenas esse texto.
+* Produzir um arquivo Markdown no formato MARKDOWN STRUCTURE FOR EACH KNOWLEDGE PIECE.
+
+# REGRAS
+* Escreva em Português.
+* Siga o template MARKDOWN STRUCTURE FOR EACH KNOWLEDGE PIECE sem alterar cabeçalhos.
+* Utilize apenas o texto fornecido em "TEXTO CONVERTIDO" como fonte.
+* Preencha "Conhecimentos Relacionados" com nomes presentes no índice bruto em CONTEXTO EXTRA no formato [[Nome Conhecimento]].
+* Não solicite uploads adicionais.
+* Para seções que não se aplicarem, escreva "Nao se aplica".
+
+# CONTEXTO EXTRA
+
+## Indice de Conhecimentos (JSON bruto)
+{index_knowledge}
+
+# TEXTO CONVERTIDO
+{docling_blocks}
+
+# MARKDOWN STRUCTURE FOR EACH KNOWLEDGE PIECE
+
+# [KNOWLEDGE TITLE]
+
+## 🎯 Categoria
+[Estrategia/Tecnica/Ferramenta/Processo/Framework/Case Study/Tip/...]
+
+## 📌 Sumário Executivo
+[Resumo executivo do conhecimento]
+
+## 📝 Descricao
+[Descrição detalhada — não resuma de forma superficial]
+
+## Complexidade
+[Um dos valores: "Iniciante", "Intermediario", "Avancado"]
+
+## ⏱️ Templo de implementação
+[Formato: "X-Y min para entender | Z-W horas para aplicar"]
+
+## ⚡Como Aplicar
+[Passo a passo]
+
+## 💡 Exemplos Práticos
+[Exemplos concretos]
+
+## ⚠️ Armadilhas Comuns
+[Riscos/erros comuns]
+
+## 📊 Metricas/Resultados
+[Resultados, métricas, KPIs quando houver]
+
+## 🔧 Ferramentas Necessarias
+[Ferramentas mencionadas]
+
+## Consideracoes
+[Observações adicionais]
+
+## Entidades
+[Array com 3-5 conceitos principais]
+
+## Pré-requisitos
+[Array de conhecimentos necessários]
+
+## 🔗Conhecimentos Relacionados
+- [[Conhecimento Relacionado 1]]
+- [[Conhecimento Relacionado 2]]
+- [[Conhecimento Relacionado N]]
+
+## 📚Fonte
+**Documento:** {knowledge_name}
+**Pagina/Secao:** [Se aplicavel]
+
+## 🏷️ Tags
+#[categoria-especifica] #[canal/plataforma] #[tipo-de-conteudo]
+
+Use apenas o texto acima para gerar o markdown.

@@ -26,15 +26,17 @@ from generators_v2.adapta.claude_45_sonnet_generator import Claude45SonnetGenera
 from generators_v2.adapta.gemini_3_pro_preview_generator import Gemini3ProPreviewGenerator
 from generators_v2.adapta.gpt_5_generator import GPT5Generator
 from generators_v2.adapta.client import ToolExecutionError
+from utils.docling_converter import DoclingConversionError, MAX_TEXT_CHARS, convert_pdf_to_text
 from utils.logger import logger
-from utils.response_validator import ResponseValidationError, requires_processing_retry
+from utils.response_validator import ResponseValidationError
 from utils.session_guard import LogoutGuard
-from prompt_manager import generate_knowledge_extraction_prompt
+from prompt_manager import generate_docling_extraction_prompt, generate_knowledge_extraction_prompt
 from utils.text_cleaner import remove_think_tags
 
 INDEXES_PATH = 'indexes'
 DOCS_PREFIX = 'docs_'
 KNOWLEDGE_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'knowledge_creation.txt')
+KNOWLEDGE_PROMPT_DOCLING_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'knowledge_creation_docling.txt')
 MAX_WORDS_PER_UPLOAD = 400000
 MAX_RETRIES = 10
 INITIAL_RETRY_DELAY = 2.0
@@ -42,6 +44,7 @@ MIN_CALL_DELAY_SECONDS = 60.0
 MAX_INDEX_CHUNK_SIZE = 300
 UPLOAD_DELAY_SECONDS = 2.0
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+STAGE2_VALIDATION_RETRY_LIMIT = 3
 def _load_stage2_concurrency() -> int:
     raw = os.getenv("STAGE2_CONCURRENCY")
     if raw:
@@ -51,7 +54,7 @@ def _load_stage2_concurrency() -> int:
             return value
         except ValueError:
             logger.warning("Valor invalido para STAGE2_CONCURRENCY=%s. Mantendo padrao.", raw)
-    return 6
+    return 1
 
 
 STAGE2_CONCURRENCY = _load_stage2_concurrency()
@@ -865,6 +868,37 @@ async def _cleanup_upload_infos(
         logger.debug('Uploads temporarios limpos com sucesso.')
 
 
+def _cleanup_local_prepared_uploads(
+    prepared_uploads: Optional[List[Tuple[Path, bool]]],
+) -> None:
+    if not prepared_uploads:
+        return
+    for upload_path, cleanup in prepared_uploads:
+        if not cleanup:
+            continue
+        try:
+            if upload_path.exists():
+                upload_path.unlink()
+        except Exception as exc:
+            logger.warning(f"Falha ao remover arquivo temporario {upload_path}: {exc}")
+
+
+async def _reset_persistent_uploads(
+    upload_context: Optional[Dict[Any, List[Tuple[Dict[str, Any], bool, Path]]]],
+) -> None:
+    if not upload_context:
+        return
+    for generator_instance, upload_infos in list(upload_context.items()):
+        if not upload_infos:
+            continue
+        await _cleanup_upload_infos(
+            generator_instance,
+            upload_infos,
+            cleanup_local_paths=False,
+        )
+    upload_context.clear()
+
+
 async def _call_generator_with_uploads(
     generator,
     prompt: Optional[str],
@@ -884,10 +918,23 @@ async def _call_generator_with_uploads(
         await _cleanup_upload_infos(generator, upload_infos, cleanup_local_paths=True)
 
 
+def _is_doc_engine_error(exc: BaseException) -> bool:
+    if not isinstance(exc, ToolExecutionError):
+        return False
+    message = str(exc).lower()
+    return "err:604" in message or "motor" in message and "analise" in message
+
+
+def _contains_retry_hint(text: Optional[str]) -> bool:
+    if not text:
+        return False
+    return "tentar novamente" in text.lower()
+
+
 async def _call_with_retries(
     generator,
     prompt: Optional[str],
-    source_paths: List[str],
+    source_paths: Optional[List[str]],
     base_dir: Optional[str],
     prefix: str,
     prefer_original_when_single: bool,
@@ -904,10 +951,11 @@ async def _call_with_retries(
     upload_delay: float = 0.0,
     upload_unique_hint: Optional[str] = None,
 ) -> str:
-    if not source_paths:
-        raise ValueError("Nenhum arquivo fonte informado para upload.")
     if prompt is None and messages is None:
         raise ValueError("Prompt ou mensagens devem ser fornecidos para a chamada ao gerador.")
+
+    normalized_sources = list(source_paths or [])
+    has_files = bool(normalized_sources)
 
     if generator_cycle:
         cycle = [gen for gen in generator_cycle if gen is not None]
@@ -920,7 +968,7 @@ async def _call_with_retries(
 
     delay = max(initial_delay, MIN_CALL_DELAY_SECONDS)
     last_error: Optional[Exception] = None
-    local_prepared_uploads = prepared_uploads
+    local_prepared_uploads = prepared_uploads if has_files else None
 
     for attempt in range(1, max_retries + 1):
         uploads: Optional[List[Tuple[Path, bool]]] = local_prepared_uploads
@@ -942,67 +990,65 @@ async def _call_with_retries(
                     logger.info(f"Usando gerador {generator_label} como fallback a partir da tentativa {attempt}.")
             logger.debug(f"Tentativa {attempt}/{max_retries} com gerador {generator_label}.")
         try:
-            if uploads is None:
-                uploads = _prepare_upload_specs(
-                    file_paths=source_paths,
-                    base_dir=base_dir,
-                    prefix=prefix,
-                    prefer_original=prefer_original_when_single,
-                    consolidate=consolidate,
-                    unique_hint=upload_unique_hint,
-                )
-                if persist_uploads or prepared_uploads is not None:
-                    local_prepared_uploads = uploads
-
-            if persist_uploads:
-                if upload_context is None:
-                    raise ValueError("upload_context deve ser fornecido quando persist_uploads=True.")
-                upload_infos = upload_context.get(current_generator)
-                if upload_infos is None:
-                    upload_infos = await _perform_uploads(
-                        current_generator,
-                        uploads,
-                        delay_between_uploads=upload_delay,
+            if has_files:
+                if uploads is None:
+                    uploads = _prepare_upload_specs(
+                        file_paths=normalized_sources,
+                        base_dir=base_dir,
+                        prefix=prefix,
+                        prefer_original=prefer_original_when_single,
+                        consolidate=consolidate,
+                        unique_hint=upload_unique_hint,
                     )
-                    upload_context[current_generator] = upload_infos
-                result = await _call_generator_with_existing_uploads(
+                    if persist_uploads or prepared_uploads is not None:
+                        local_prepared_uploads = uploads
+
+                if persist_uploads:
+                    if upload_context is None:
+                        raise ValueError("upload_context deve ser fornecido quando persist_uploads=True.")
+                    upload_infos = upload_context.get(current_generator)
+                    if upload_infos is None:
+                        upload_infos = await _perform_uploads(
+                            current_generator,
+                            uploads,
+                            delay_between_uploads=upload_delay,
+                        )
+                        upload_context[current_generator] = upload_infos
+                    result = await _call_generator_with_existing_uploads(
+                        current_generator,
+                        prompt,
+                        upload_infos,
+                        messages=messages,
+                    )
+                    return result
+
+                result = await _call_generator_with_uploads(
                     current_generator,
                     prompt,
-                    upload_infos,
+                    uploads,
                     messages=messages,
+                    upload_delay=upload_delay,
                 )
-                if requires_processing_retry(result):
-                    logger.warning(
-                        "Gerador {} respondeu que nao conseguiu processar o arquivo (tentativa {}/{})",
-                        generator_label,
-                        attempt,
-                        max_retries,
-                    )
-                    raise ResponseValidationError("Resposta invalida: modelo nao conseguiu processar o arquivo.")
                 return result
 
-            result = await _call_generator_with_uploads(
+            # Sem arquivos anexados, apenas repasse o prompt/mensagens.
+            return await _call_generator_with_existing_uploads(
                 current_generator,
                 prompt,
-                uploads,
+                [],
                 messages=messages,
-                upload_delay=upload_delay,
             )
-            if requires_processing_retry(result):
-                logger.warning(
-                    "Gerador {} respondeu que nao conseguiu processar o arquivo (tentativa {}/{})",
-                    generator_label,
-                    attempt,
-                    max_retries,
-                )
-                raise ResponseValidationError("Resposta invalida: modelo nao conseguiu processar o arquivo.")
-            return result
         except ToolExecutionError as exc:
             logger.error("Falha do motor/documento reportada pelo modelo: %s", exc)
             raise
         except Exception as exc:
             last_error = exc
-            if not persist_uploads and prepared_uploads is None and uploads:
+            if (
+                has_files
+                and not persist_uploads
+                and prepared_uploads is None
+                and uploads
+            ):
                 for path, cleanup in uploads:
                     if cleanup and path.exists():
                         try:
@@ -1053,6 +1099,48 @@ def _build_files_prompt_segment(
 
     listing = "\n".join(f"- {name}" for name in names)
     return f"\n\n# ARQUIVOS DISPONIVEIS\n{listing}"
+
+
+def _resolve_display_name(file_path: Path, base_dir: Optional[str]) -> str:
+    if base_dir:
+        try:
+            return os.path.relpath(str(file_path), base_dir)
+        except ValueError:
+            pass
+    return file_path.name
+
+
+def _truncate_text(text: str, max_chars: int = MAX_TEXT_CHARS) -> str:
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    suffix = f"\n\n[Trecho truncado apos {max_chars} caracteres]"
+    return text[:max_chars] + suffix
+
+
+def _extract_docling_text(file_path: str) -> str:
+    path = Path(file_path)
+    if path.suffix.lower() == ".pdf":
+        result = convert_pdf_to_text(path)
+        return result.text
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    return _truncate_text(text)
+
+
+def _build_docling_blocks(file_paths: List[str], base_dir: Optional[str]) -> str:
+    blocks: List[str] = []
+    for raw_path in file_paths:
+        path = Path(raw_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Arquivo nao encontrado para Docling: {path}")
+        display_name = _resolve_display_name(path, base_dir)
+        text = _extract_docling_text(str(path))
+        if not text.strip():
+            continue
+        blocks.append(f"## {display_name}\n{text.strip()}")
+    if not blocks:
+        raise DoclingConversionError("Docling nao retornou texto utilizavel para o fallback.")
+    return "\n\n".join(blocks)
 
 
 def process_input_folder(folder_path):
@@ -1145,31 +1233,72 @@ async def run_stage1_index_creation():
         knowledges_for_stage2: List[Dict[str, Any]] = []
         prepared_uploads: Optional[List[Tuple[Path, bool]]] = None
         persistent_upload_context: Dict[Any, List[Tuple[Dict[str, Any], bool, Path]]] = {}
+        current_source_files = list(source_files)
+        docling_mode = False
 
         try:
-            prepared_uploads = _prepare_upload_specs(
-                file_paths=source_files,
-                base_dir=folder_path,
-                prefix='stage1',
-                prefer_original=True,
-                consolidate=False,
-            )
             while True:
-                raw_response = await _call_with_retries(
-                    generator=claude_generator,
-                    prompt=None,
-                    source_paths=source_files,
-                    base_dir=folder_path,
-                    prefix='stage1',
-                    prefer_original_when_single=True,
-                    consolidate=False,
-                    generator_cycle=[claude_generator, gpt_generator, gemini_generator],
-                    messages=conversation,
-                    prepared_uploads=prepared_uploads,
-                    persist_uploads=True,
-                    upload_context=persistent_upload_context,
-                    upload_delay=UPLOAD_DELAY_SECONDS,
-                )
+                if current_source_files and prepared_uploads is None:
+                    prepared_uploads = _prepare_upload_specs(
+                        file_paths=current_source_files,
+                        base_dir=folder_path,
+                        prefix='stage1',
+                        prefer_original=True,
+                        consolidate=False,
+                    )
+                try:
+                    raw_response = await _call_with_retries(
+                        generator=claude_generator,
+                        prompt=None,
+                        source_paths=current_source_files,
+                        base_dir=folder_path,
+                        prefix='stage1',
+                        prefer_original_when_single=True,
+                        consolidate=False,
+                        generator_cycle=[claude_generator, gpt_generator, gemini_generator],
+                        messages=conversation,
+                        prepared_uploads=prepared_uploads if current_source_files else None,
+                        persist_uploads=bool(current_source_files),
+                        upload_context=persistent_upload_context if current_source_files else None,
+                        upload_delay=UPLOAD_DELAY_SECONDS,
+                    )
+                except ToolExecutionError as exc:
+                    if docling_mode or not _is_doc_engine_error(exc):
+                        raise
+                    logger.warning(
+                        "Doc engine falhou ao ler %s (job %s). Ativando fallback Docling.",
+                        current_file_name,
+                        job_id,
+                    )
+                    await _reset_persistent_uploads(persistent_upload_context)
+                    _cleanup_local_prepared_uploads(prepared_uploads)
+                    prepared_uploads = None
+                    persistent_upload_context.clear()
+                    try:
+                        docling_blocks = _build_docling_blocks([job['file_path']], folder_path)
+                    except (DoclingConversionError, OSError) as conv_exc:
+                        logger.error("Falha ao converter %s via Docling: %s", current_file_name, conv_exc)
+                        raise
+                    conversation = [{
+                        'role': 'user',
+                        'content': generate_docling_extraction_prompt(
+                            current_file_name,
+                            docling_blocks,
+                            existing_index_paths=index_part_paths if has_existing_index else None,
+                            existing_index_display_names=index_display_names,
+                        ),
+                    }]
+                    _write_conversation_log(conversation)
+                    accumulated_raw = ""
+                    accumulated_clean_chunks = []
+                    if temp_raw_path.exists():
+                        try:
+                            temp_raw_path.write_text("", encoding='utf-8')
+                        except Exception:
+                            pass
+                    docling_mode = True
+                    current_source_files = list(index_part_paths) if index_part_paths else []
+                    continue
 
                 accumulated_raw += raw_response
                 sanitized_accumulated = _sanitize_patch_text(accumulated_raw) or accumulated_raw
@@ -1341,6 +1470,8 @@ async def process_pending_knowledges():
 
     with open(KNOWLEDGE_PROMPT_PATH, 'r', encoding='utf-8') as f:
         prompt_template = f.read()
+    with open(KNOWLEDGE_PROMPT_DOCLING_PATH, 'r', encoding='utf-8') as f:
+        docling_prompt_template = f.read()
 
     semaphore = asyncio.Semaphore(STAGE2_CONCURRENCY)
     abort_event = asyncio.Event()
@@ -1368,7 +1499,7 @@ async def process_pending_knowledges():
                 sanitized_row.get('knowledge_name') or f"Conhecimento {sanitized_row.get('knowledge_id')}"
             )
             try:
-                await _process_single_knowledge(sanitized_row, prompt_template)
+                await _process_single_knowledge(sanitized_row, prompt_template, docling_prompt_template)
             except ToolExecutionError:
                 abort_event.set()
                 raise
@@ -1383,7 +1514,11 @@ async def process_pending_knowledges():
         raise exc
 
 
-async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: str) -> None:
+async def _process_single_knowledge(
+    knowledge: Dict[str, Any],
+    prompt_template: str,
+    docling_prompt_template: str,
+) -> None:
     knowledge_id = knowledge['knowledge_id']
     folder_path = knowledge['knowledge_folder_path']
     knowledge_name = knowledge.get('knowledge_name') or f"Conhecimento {knowledge_id}"
@@ -1413,9 +1548,12 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
 
         raw_index_content = knowledge.get('sanitized_index_json') or '[]'
 
-        prompt = prompt_template.replace('{knowledge_category}', knowledge_category)
-        prompt = prompt.replace('{knowledge_name}', prompt_knowledge_name)
-        prompt = prompt.replace('{index_knowledge}', raw_index_content)
+        base_prompt = (
+            prompt_template
+            .replace('{knowledge_category}', knowledge_category)
+            .replace('{knowledge_name}', prompt_knowledge_name)
+            .replace('{index_knowledge}', raw_index_content)
+        )
         upload_display_names_stage2 = _predict_upload_names(
             consolidated_sources,
             abs_folder_path,
@@ -1425,20 +1563,64 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
         )
         source_prompt = _build_files_prompt_segment(consolidated_sources, abs_folder_path, upload_display_names_stage2)
         if source_prompt:
-            prompt += source_prompt
+            base_prompt += source_prompt
 
         generator = Claude45SonnetGenerator()
         guard = LogoutGuard(generator.client, label=f"pipeline-stage2-{knowledge_id}")
-        markdown_output = await _call_with_retries(
-            generator=generator,
-            prompt=prompt,
-            source_paths=consolidated_sources,
-            base_dir=abs_folder_path,
-            prefix='stage2',
-            prefer_original_when_single=True,
-            upload_unique_hint=str(knowledge_id),
-        )
-        markdown_output = remove_think_tags(markdown_output)
+        docling_mode = False
+        docling_prompt_text: Optional[str] = None
+        validation_retries = 0
+
+        while True:
+            prompt_to_use = docling_prompt_text if docling_mode and docling_prompt_text else base_prompt
+            call_source_paths = [] if docling_mode else consolidated_sources
+            try:
+                markdown_output = await _call_with_retries(
+                    generator=generator,
+                    prompt=prompt_to_use,
+                    source_paths=call_source_paths,
+                    base_dir=abs_folder_path,
+                    prefix='stage2',
+                    prefer_original_when_single=True,
+                    upload_unique_hint=str(knowledge_id),
+                )
+            except ToolExecutionError as exc:
+                if docling_mode or not _is_doc_engine_error(exc):
+                    raise
+                logger.warning(
+                    "Doc engine falhou para o conhecimento %s. Convertendo fontes com Docling.",
+                    knowledge_id,
+                )
+                try:
+                    docling_blocks = _build_docling_blocks(consolidated_sources, abs_folder_path)
+                except (DoclingConversionError, OSError) as conv_exc:
+                    logger.error("Falha ao converter arquivos do conhecimento %s: %s", knowledge_id, conv_exc)
+                    raise
+                docling_prompt_text = (
+                    docling_prompt_template
+                    .replace('{knowledge_name}', prompt_knowledge_name)
+                    .replace('{index_knowledge}', raw_index_content)
+                    .replace('{docling_blocks}', docling_blocks)
+                )
+                docling_mode = True
+                continue
+
+            markdown_output = remove_think_tags(markdown_output)
+            if _contains_retry_hint(markdown_output):
+                validation_retries += 1
+                if validation_retries >= STAGE2_VALIDATION_RETRY_LIMIT:
+                    raise ResponseValidationError(
+                        f"Resposta invalida para conhecimento {knowledge_id}: texto pede para tentar novamente."
+                    )
+                logger.warning(
+                    "Conhecimento %s retornou 'tentar novamente'. Repetindo tentativa %s/%s.",
+                    knowledge_id,
+                    validation_retries,
+                    STAGE2_VALIDATION_RETRY_LIMIT,
+                )
+                await asyncio.sleep(MIN_CALL_DELAY_SECONDS)
+                continue
+            break
 
         knowledge_slug = slugify(knowledge_name)
         output_dir = get_docs_output_dir(folder_path)
