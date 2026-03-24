@@ -723,6 +723,8 @@ class AdaptaClientV2:
                 transport=self._transport,
             )
             self._client_loop = current_loop
+            if self._auth_cookies:
+                self._client.cookies.update(self._auth_cookies)
 
         return self._client
 

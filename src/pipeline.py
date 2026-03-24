@@ -26,6 +26,8 @@ from generators_v2.adapta.claude_45_sonnet_generator import Claude45SonnetGenera
 from generators_v2.adapta.gemini_3_pro_preview_generator import Gemini3ProPreviewGenerator
 from generators_v2.adapta.gpt_5_generator import GPT5Generator
 from utils.logger import logger
+from utils.response_validator import ResponseValidationError, requires_processing_retry
+from utils.session_guard import LogoutGuard
 from prompt_manager import generate_knowledge_extraction_prompt
 from utils.text_cleaner import remove_think_tags
 
@@ -35,6 +37,7 @@ KNOWLEDGE_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'know
 MAX_WORDS_PER_UPLOAD = 400000
 MAX_RETRIES = 10
 INITIAL_RETRY_DELAY = 2.0
+MIN_CALL_DELAY_SECONDS = 60.0
 MAX_INDEX_CHUNK_SIZE = 300
 UPLOAD_DELAY_SECONDS = 2.0
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -902,7 +905,7 @@ async def _call_with_retries(
             raise ValueError("Nenhum gerador primario informado para a chamada.")
         cycle = [generator]
 
-    delay = initial_delay
+    delay = max(initial_delay, MIN_CALL_DELAY_SECONDS)
     last_error: Optional[Exception] = None
     local_prepared_uploads = prepared_uploads
 
@@ -949,20 +952,38 @@ async def _call_with_retries(
                         delay_between_uploads=upload_delay,
                     )
                     upload_context[current_generator] = upload_infos
-                return await _call_generator_with_existing_uploads(
+                result = await _call_generator_with_existing_uploads(
                     current_generator,
                     prompt,
                     upload_infos,
                     messages=messages,
                 )
+                if requires_processing_retry(result):
+                    logger.warning(
+                        "Gerador {} respondeu que nao conseguiu processar o arquivo (tentativa {}/{})",
+                        generator_label,
+                        attempt,
+                        max_retries,
+                    )
+                    raise ResponseValidationError("Resposta invalida: modelo nao conseguiu processar o arquivo.")
+                return result
 
-            return await _call_generator_with_uploads(
+            result = await _call_generator_with_uploads(
                 current_generator,
                 prompt,
                 uploads,
                 messages=messages,
                 upload_delay=upload_delay,
             )
+            if requires_processing_retry(result):
+                logger.warning(
+                    "Gerador {} respondeu que nao conseguiu processar o arquivo (tentativa {}/{})",
+                    generator_label,
+                    attempt,
+                    max_retries,
+                )
+                raise ResponseValidationError("Resposta invalida: modelo nao conseguiu processar o arquivo.")
+            return result
         except Exception as exc:
             last_error = exc
             if not persist_uploads and prepared_uploads is None and uploads:
@@ -974,9 +995,10 @@ async def _call_with_retries(
                             pass
             if attempt == max_retries:
                 raise
-            logger.warning(f"Tentativa {attempt}/{max_retries} falhou ({exc}). Nova tentativa em {delay:.1f}s...")
-            await asyncio.sleep(delay)
-            delay *= 1.5
+            sleep_time = max(delay, MIN_CALL_DELAY_SECONDS)
+            logger.warning(f"Tentativa {attempt}/{max_retries} falhou ({exc}). Nova tentativa em {sleep_time:.1f}s...")
+            await asyncio.sleep(sleep_time)
+            delay = max(delay * 1.5, MIN_CALL_DELAY_SECONDS)
 
     if last_error:
         raise last_error
@@ -1055,6 +1077,11 @@ async def run_stage1_index_creation():
     claude_generator = Claude45SonnetGenerator()
     gpt_generator = GPT5Generator()
     gemini_generator = Gemini3ProPreviewGenerator()
+    claude_guard = LogoutGuard(claude_generator.client, label="pipeline-stage1-claude")
+    gpt_guard = LogoutGuard(gpt_generator.client, label="pipeline-stage1-gpt5")
+    gemini_guard = LogoutGuard(gemini_generator.client, label="pipeline-stage1-gemini")
+    for guard in (claude_guard, gpt_guard, gemini_guard):
+        guard.register()
 
     for job in pending_jobs:
         job_id = job['id']
@@ -1281,6 +1308,12 @@ async def run_stage1_index_creation():
                     except Exception as cleanup_exc:
                         logger.warning(f"Falha ao remover arquivo de depuracao {debug_path}: {cleanup_exc}")
 
+    await asyncio.gather(
+        claude_guard.close_now(),
+        gpt_guard.close_now(),
+        gemini_guard.close_now(),
+    )
+
 async def process_pending_knowledges():
     _ensure_pending_knowledges_synced()
     logger.info('Iniciando Estagio 2: Criacao de Arquivos de Conhecimento.')
@@ -1328,6 +1361,7 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
     knowledge_category = str(knowledge.get('knowledge_category') or 'Geral').strip() or 'Geral'
 
     logger.info(f"Processando conhecimento ID: {knowledge_id} - {knowledge_name}")
+    guard: Optional[LogoutGuard] = None
 
     try:
         abs_folder_path = folder_path if os.path.isabs(folder_path) else os.path.join(BASE_DIR, folder_path)
@@ -1363,6 +1397,7 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
             prompt += source_prompt
 
         generator = Claude45SonnetGenerator()
+        guard = LogoutGuard(generator.client, label=f"pipeline-stage2-{knowledge_id}")
         markdown_output = await _call_with_retries(
             generator=generator,
             prompt=prompt,
@@ -1402,6 +1437,9 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
     except Exception as exc:
         logger.error(f"Erro ao processar o conhecimento {knowledge_id}: {exc}")
         update_knowledge_status(knowledge_id, status_id=1)
+    finally:
+        if guard:
+            await guard.close_now()
 
 
 def _ensure_pending_knowledges_synced():

@@ -1,4 +1,5 @@
 import asyncio
+from typing import Optional
 import nest_asyncio
 import streamlit as st
 
@@ -16,6 +17,7 @@ from generators_v2 import (
     SonarProGenerator,
 )
 from utils.logger import logger
+from utils.session_guard import LogoutGuard
 
 nest_asyncio.apply()
 
@@ -39,7 +41,15 @@ st.set_page_config(page_title="Adapta.one Chat", layout="wide")
 @st.cache_resource
 def get_shared_client() -> AdaptaClientV2:
     """Instancia e reutiliza o cliente Adapta para todos os generators."""
-    return AdaptaClientV2()
+    client = AdaptaClientV2()
+    guard = LogoutGuard(client, label="app_chat")
+    guard.register()
+    setattr(client, "_logout_guard", guard)
+    return client
+
+
+def _get_logout_guard(client: AdaptaClientV2) -> Optional[LogoutGuard]:
+    return getattr(client, "_logout_guard", None)
 
 
 @st.cache_resource
@@ -85,6 +95,19 @@ def main():
             st.session_state.messages = []
             st.session_state.current_chat_id = None
             st.rerun()
+
+        if st.button("Logout Adapta"):
+            client = get_shared_client()
+            guard = _get_logout_guard(client)
+            if guard:
+                run_async_task(guard.close_now())
+                logger.info("Logout manual solicitado no app_chat.")
+                st.session_state.messages = []
+                st.session_state.current_chat_id = None
+                st.success("Sessao Adapta encerrada. Um novo login sera feito automaticamente quando necessario.")
+            else:
+                st.info("Cliente ainda nao inicializado; nada para finalizar.")
+            st.stop()
 
         model_name = st.selectbox("Choose a model:", list(generators.keys()))
 

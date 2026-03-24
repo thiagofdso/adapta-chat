@@ -2,6 +2,7 @@ import streamlit as st
 import asyncio
 import sys
 import os
+from typing import Optional
 import nest_asyncio
 from itertools import cycle
 from utils.text_cleaner import remove_think_tags
@@ -19,6 +20,7 @@ from generators_v2 import (
     SonarProGenerator,
 )
 from utils.logger import logger
+from utils.session_guard import LogoutGuard
 
 # Em Windows, usar SelectorEventLoop evita bugs do Proactor com anyio/httpx.
 if sys.platform.startswith("win"):
@@ -48,7 +50,16 @@ st.set_page_config(page_title="Multi-Agent Debate Chat", layout="wide")
 # --- Agent Initialization ---
 @st.cache_resource
 def get_shared_client() -> AdaptaClientV2:
-    return AdaptaClientV2()
+    client = AdaptaClientV2()
+    guard = LogoutGuard(client, label="app_debate")
+    guard.register()
+    setattr(client, "_logout_guard", guard)
+    return client
+
+
+def _get_debate_logout_guard() -> Optional[LogoutGuard]:
+    client = get_shared_client()
+    return getattr(client, "_logout_guard", None)
 
 
 @st.cache_resource
@@ -196,6 +207,22 @@ def main():
         st.session_state.round_view_force_to = None
 
     base_generators = initialize_base_generators()
+
+    if st.sidebar.button("Logout Adapta"):
+        guard = _get_debate_logout_guard()
+        if guard:
+            loop = get_shared_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(guard.close_now())
+            st.session_state.auth_done = False
+            st.session_state.debate_started = False
+            st.session_state.agent_chat_ids = {}
+            st.session_state.manager_chat_id = None
+            st.sidebar.success("Sessao Adapta encerrada. Execute o login novamente antes do proximo debate.")
+            logger.info("Logout manual solicitado no app_debate.")
+        else:
+            st.sidebar.info("Cliente Adapta ainda nao foi inicializado nesta sessao.")
+        st.stop()
 
     async def ensure_shared_login() -> None:
         """Garante login do client compartilhado apenas uma vez."""

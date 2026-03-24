@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Dict, List
 
 from generators_v2.adapta.claude_45_sonnet_generator import Claude45SonnetGenerator
+from utils.response_validator import requires_processing_retry
+from utils.session_guard import LogoutGuard
 from utils.text_cleaner import remove_think_tags
 from utils.logger import logger
 
@@ -17,6 +19,8 @@ from utils.logger import logger
 SOURCE_DIR = Path("livros")
 OUTPUT_DIR = Path("docs_livros")
 NUM_ITERACOES = 2  # quantas vezes cada dimensão será gerada; fica com a resposta mais longa
+DIMENSION_RETRY_LIMIT = 3
+DIMENSION_RETRY_DELAY_SECONDS = 60.0
 UPLOAD_DELAY_SECONDS = 10.0  # delay padrão após upload
 
 PROMPTS_DIR = Path("src/prompts/livro")
@@ -86,28 +90,50 @@ async def process_book(
                 dim_paths.append(dim_file)
                 continue
 
-            tasks = [
-                asyncio.create_task(run_dimension(generator, prompt, upload_info))
-                for _ in range(NUM_ITERACOES)
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            dimension_completed = False
+            for attempt in range(1, DIMENSION_RETRY_LIMIT + 1):
+                tasks = [
+                    asyncio.create_task(run_dimension(generator, prompt, upload_info))
+                    for _ in range(NUM_ITERACOES)
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            best_content = ""
-            for idx, res in enumerate(results, start=1):
-                if isinstance(res, Exception):
-                    logger.warning("Iteração {} da dimensão {} falhou: {}", idx, dimension, res)
-                    continue
-                logger.info("Dimensão {} tentativa {}/{} concluída para {}", dimension, idx, NUM_ITERACOES, pdf_path.name)
-                if len(res) > len(best_content):
-                    best_content = res
+                best_content = ""
+                for idx, res in enumerate(results, start=1):
+                    if isinstance(res, Exception):
+                        logger.warning("Iteração {} da dimensão {} falhou: {}", idx, dimension, res)
+                        continue
+                    if requires_processing_retry(res):
+                        logger.warning(
+                            "Dimensão {} tentativa {}.{} retornou aviso de que o arquivo não pôde ser processado. Repetindo.",
+                            dimension,
+                            attempt,
+                            idx,
+                        )
+                        continue
+                    logger.info("Dimensão {} tentativa {}/{} concluída para {}", dimension, idx, NUM_ITERACOES, pdf_path.name)
+                    if len(res) > len(best_content):
+                        best_content = res
 
-            if best_content:
-                if dimension <= 6 and not best_content.endswith("\n"):
-                    best_content += "\n"
-                dim_file.write_text(best_content, encoding="utf-8")
-                logger.info("Dimensão {} finalizada (maior resposta selecionada) para {}", dimension, pdf_path.name)
-                dim_paths.append(dim_file)
-            else:
+                if best_content:
+                    if dimension <= 6 and not best_content.endswith("\n"):
+                        best_content += "\n"
+                    dim_file.write_text(best_content, encoding="utf-8")
+                    logger.info("Dimensão {} finalizada (maior resposta selecionada) para {}", dimension, pdf_path.name)
+                    dim_paths.append(dim_file)
+                    dimension_completed = True
+                    break
+
+                if attempt < DIMENSION_RETRY_LIMIT:
+                    logger.warning(
+                        "Nenhuma resposta válida obtida na dimensão {} (tentativa {}/{}). Repetindo processamento.",
+                        dimension,
+                        attempt,
+                        DIMENSION_RETRY_LIMIT,
+                    )
+                    await asyncio.sleep(DIMENSION_RETRY_DELAY_SECONDS)
+
+            if not dimension_completed:
                 logger.error("Nenhuma resposta válida obtida na dimensão {} para {}", dimension, pdf_path.name)
                 raise RuntimeError(f"Dimensão {dimension} sem respostas válidas")
 
@@ -188,17 +214,22 @@ async def process_book(
 async def main(auto: bool = False, upload_delay: float = UPLOAD_DELAY_SECONDS) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     generator = Claude45SonnetGenerator()
+    guard = LogoutGuard(generator.client, label="destilador")
+    guard.register()
 
-    logger.info("Destilador iniciado com auto={} e upload_delay={}s", auto, upload_delay)
-    pdfs = sorted(p for p in SOURCE_DIR.glob("*.pdf") if p.is_file())
-    if not pdfs:
-        logger.info("Nenhum PDF encontrado em {}", SOURCE_DIR)
-        return
+    try:
+        logger.info("Destilador iniciado com auto={} e upload_delay={}s", auto, upload_delay)
+        pdfs = sorted(p for p in SOURCE_DIR.glob("*.pdf") if p.is_file())
+        if not pdfs:
+            logger.info("Nenhum PDF encontrado em {}", SOURCE_DIR)
+            return
 
-    for idx, pdf in enumerate(pdfs, start=1):
-        logger.info("Iniciando processamento {}/{}: {}", idx, len(pdfs), pdf.name)
-        await process_book(pdf, generator, auto=auto, upload_delay=upload_delay)
-    logger.info("Destilador finalizado. Livros processados: {}", len(pdfs))
+        for idx, pdf in enumerate(pdfs, start=1):
+            logger.info("Iniciando processamento {}/{}: {}", idx, len(pdfs), pdf.name)
+            await process_book(pdf, generator, auto=auto, upload_delay=upload_delay)
+        logger.info("Destilador finalizado. Livros processados: {}", len(pdfs))
+    finally:
+        await guard.close_now()
 
 
 if __name__ == "__main__":
