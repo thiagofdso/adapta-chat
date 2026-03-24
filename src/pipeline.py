@@ -25,6 +25,7 @@ from database import (
 from generators_v2.adapta.claude_45_sonnet_generator import Claude45SonnetGenerator
 from generators_v2.adapta.gemini_3_pro_preview_generator import Gemini3ProPreviewGenerator
 from generators_v2.adapta.gpt_5_generator import GPT5Generator
+from generators_v2.adapta.client import ToolExecutionError
 from utils.logger import logger
 from utils.response_validator import ResponseValidationError, requires_processing_retry
 from utils.session_guard import LogoutGuard
@@ -41,7 +42,19 @@ MIN_CALL_DELAY_SECONDS = 60.0
 MAX_INDEX_CHUNK_SIZE = 300
 UPLOAD_DELAY_SECONDS = 2.0
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-STAGE2_CONCURRENCY = 15
+def _load_stage2_concurrency() -> int:
+    raw = os.getenv("STAGE2_CONCURRENCY")
+    if raw:
+        try:
+            value = max(1, int(raw))
+            logger.info("STAGE2_CONCURRENCY ajustado via ambiente para %s", value)
+            return value
+        except ValueError:
+            logger.warning("Valor invalido para STAGE2_CONCURRENCY=%s. Mantendo padrao.", raw)
+    return 6
+
+
+STAGE2_CONCURRENCY = _load_stage2_concurrency()
 
 os.makedirs(INDEXES_PATH, exist_ok=True)
 
@@ -984,6 +997,9 @@ async def _call_with_retries(
                 )
                 raise ResponseValidationError("Resposta invalida: modelo nao conseguiu processar o arquivo.")
             return result
+        except ToolExecutionError as exc:
+            logger.error("Falha do motor/documento reportada pelo modelo: %s", exc)
+            raise
         except Exception as exc:
             last_error = exc
             if not persist_uploads and prepared_uploads is None and uploads:
@@ -1327,6 +1343,7 @@ async def process_pending_knowledges():
         prompt_template = f.read()
 
     semaphore = asyncio.Semaphore(STAGE2_CONCURRENCY)
+    abort_event = asyncio.Event()
     index_cache: Dict[str, str] = {}
 
     def get_sanitized_index_json(folder: str) -> str:
@@ -1339,17 +1356,31 @@ async def process_pending_knowledges():
         return index_cache[folder]
 
     async def run_with_limit(row: Dict[str, Any]) -> None:
+        if abort_event.is_set():
+            return
         async with semaphore:
+            if abort_event.is_set():
+                return
             folder = row.get('knowledge_folder_path') or ''
             sanitized_row = dict(row)
             sanitized_row['sanitized_index_json'] = get_sanitized_index_json(folder)
             sanitized_row['knowledge_prompt_name'] = _sanitize_reference_name(
                 sanitized_row.get('knowledge_name') or f"Conhecimento {sanitized_row.get('knowledge_id')}"
             )
-            await _process_single_knowledge(sanitized_row, prompt_template)
+            try:
+                await _process_single_knowledge(sanitized_row, prompt_template)
+            except ToolExecutionError:
+                abort_event.set()
+                raise
 
     tasks = [asyncio.create_task(run_with_limit(dict(row))) for row in pending_rows]
-    await asyncio.gather(*tasks)
+    try:
+        await asyncio.gather(*tasks)
+    except ToolExecutionError as exc:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise exc
 
 
 async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: str) -> None:
@@ -1434,6 +1465,10 @@ async def _process_single_knowledge(knowledge: Dict[str, Any], prompt_template: 
         update_knowledge_status(knowledge_id, status_id=3)
         logger.info(f"Conhecimento {knowledge_id} concluido com sucesso.")
 
+    except ToolExecutionError as exc:
+        logger.error(f"Erro ao processar o conhecimento {knowledge_id}: {exc}")
+        update_knowledge_status(knowledge_id, status_id=1)
+        raise
     except Exception as exc:
         logger.error(f"Erro ao processar o conhecimento {knowledge_id}: {exc}")
         update_knowledge_status(knowledge_id, status_id=1)

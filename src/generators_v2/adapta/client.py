@@ -7,11 +7,12 @@ import base64
 import json
 import secrets
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from email.utils import parsedate_to_datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple, Union
 
 import httpx
@@ -22,9 +23,11 @@ from utils.logger import logger
 AGENT_BASE_URL = "https://agent.adapta.one"
 API_AGENT_BASE_URL = "https://api-agent.adapta.one"
 CLERK_BASE_URL = "https://clerk.agent.adapta.one/v1"
-CLERK_API_VERSION = "2025-04-10"
-CLERK_JS_VERSION = "5.103.1"
+CLERK_API_VERSION = "2025-11-10"
+CLERK_JS_VERSION = "5.125.7"
 DEFAULT_MODEL = "CLAUDE_4_5_SONNET"
+LOGIN_THROTTLE_SECONDS = 2.0
+TOKEN_REFRESH_THROTTLE_SECONDS = 120.0
 
 FILE_API_BASE = f"{AGENT_BASE_URL}/api/file"
 FILE_UPLOAD_V2_ENDPOINT = f"{API_AGENT_BASE_URL}/api/file/upload"
@@ -91,6 +94,15 @@ class ChatCompletionResult:
     messages: List[Dict[str, str]]
 
 
+class ToolExecutionError(RuntimeError):
+    """Indica que uma ferramenta externa falhou durante a chamada ao modelo."""
+
+    def __init__(self, message: str, *, tool_name: Optional[str] = None, tool_call_id: Optional[str] = None) -> None:
+        self.tool_name = tool_name
+        self.tool_call_id = tool_call_id
+        super().__init__(message)
+
+
 class AdaptaClientV2:
     """Cliente mínimo para validar login, upload de arquivos e chamadas de IA."""
 
@@ -117,6 +129,9 @@ class AdaptaClientV2:
         self._auth_lock = asyncio.Lock()
         self._last_thought: Optional[str] = None
         self._last_chat_id: Optional[str] = None
+        self._login_rate_limiter = _global_login_rate_limiter
+        self._token_refresh_rate_limiter = _global_token_refresh_rate_limiter
+        self._used_production_token = False
 
     async def __aenter__(self) -> "AdaptaClientV2":
         await self._ensure_client()
@@ -145,18 +160,19 @@ class AdaptaClientV2:
 
     async def simulate_login(self) -> AuthResult:
         """Executa o fluxo mínimo necessário para autenticar o usuário."""
+        await self._login_rate_limiter.wait()
         async with self._auth_lock:
             client = await self._ensure_client()
 
             await self._fetch_sign_in_page(client)
-            await self._start_sign_in_attempt(client)
-            payload = await self._complete_password_sign_in(client)
+            attempt_id = await self._start_sign_in_attempt(client)
+            payload = await self._attempt_password_first_factor(client, attempt_id)
 
             self._session_id = self._extract_session_id(payload)
             if not self._session_id:
                 raise RuntimeError("Nao foi possivel identificar o session_id retornado pela API.")
 
-            await self._touch_session(client, self._session_id)
+            await self._touch_session(client, self._session_id, intent="select_session")
 
             cookies = self._collect_auth_cookies(client)
             if cookies:
@@ -167,7 +183,43 @@ class AdaptaClientV2:
                 logger.warning("Cookies esperados nao encontrados: {}", ", ".join(sorted(missing)))
 
             logger.debug("Login concluído com session_id={}", self._session_id)
-            return AuthResult(session_id=self._session_id, cookies=cookies)
+        return AuthResult(session_id=self._session_id, cookies=cookies)
+
+    async def list_active_sessions(self) -> List[Dict[str, Any]]:
+        """Retorna as sessões ativas do usuário autenticado."""
+        await self._ensure_authenticated()
+        client = await self._ensure_client()
+        params = self._clerk_params()
+        if self._session_id:
+            params["_clerk_session_id"] = self._session_id
+        url = f"{CLERK_BASE_URL}/me/sessions/active"
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        payload = response.json()
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                return data
+        return []
+
+    async def fix_session(self, session_id: str) -> int:
+        """Invoca o endpoint fix-session no backend do agente para uma sessão específica."""
+        if not session_id:
+            raise ValueError("session_id obrigatorio para fix_session().")
+        await self._ensure_authenticated()
+        token = await self._ensure_bearer_token()
+        client = await self._ensure_client()
+        headers = {
+            "authorization": f"Bearer {token}",
+            "accept": "application/json",
+            "content-type": "application/json",
+        }
+        url = f"{AGENT_BASE_URL}/api/user/fix-session/v1"
+        response = await client.post(url, headers=headers, json={"sessionId": session_id})
+        response.raise_for_status()
+        return response.status_code
 
     async def call_model(
         self,
@@ -741,44 +793,57 @@ class AdaptaClientV2:
         )
         response.raise_for_status()
 
-    async def _start_sign_in_attempt(self, client: httpx.AsyncClient) -> None:
+    async def _start_sign_in_attempt(self, client: httpx.AsyncClient) -> str:
         url = f"{CLERK_BASE_URL}/client/sign_ins"
-        logger.debug("Iniciando tentativa de login (passkey) em {}", url)
-        response = await client.post(
-            url,
-            params=self._clerk_params(),
-            data={
-                "locale": "pt-BR",
-                "strategy": "passkey",
-            },
-            headers=self._form_headers(),
-        )
-        response.raise_for_status()
-
-    async def _complete_password_sign_in(self, client: httpx.AsyncClient) -> Dict[str, Any]:
-        url = f"{CLERK_BASE_URL}/client/sign_ins"
-        logger.debug("Enviando credenciais para concluir o login em {}", url)
-        response = await client.post(
+        logger.debug("Iniciando tentativa de login (primeiro passo) em {}", url)
+        response = await self._post_with_retry(
+            client,
             url,
             params=self._clerk_params(),
             data={
                 "locale": "pt-BR",
                 "identifier": self.login,
-                "password": self.password,
-                "strategy": "password",
             },
             headers=self._form_headers(),
         )
-        response.raise_for_status()
-        return response.json()
+        data = response.json()
+        attempt_id = self._extract_sign_in_attempt_id(data)
+        if not attempt_id:
+            raise RuntimeError("Nao foi possivel obter o id da tentativa de login")
+        return attempt_id
 
-    async def _touch_session(self, client: httpx.AsyncClient, session_id: str) -> None:
-        url = f"{CLERK_BASE_URL}/client/sessions/{session_id}/touch"
-        logger.debug("Atualizando sessao {} em {}", session_id, url)
-        response = await client.post(
+    async def _attempt_password_first_factor(
+        self, client: httpx.AsyncClient, attempt_id: str
+    ) -> Dict[str, Any]:
+        if not attempt_id:
+            raise ValueError("attempt_id obrigatorio para concluir o login")
+        url = f"{CLERK_BASE_URL}/client/sign_ins/{attempt_id}/attempt_first_factor"
+        logger.debug("Enviando senha para concluir o login em {}", url)
+        response = await self._post_with_retry(
+            client,
             url,
             params=self._clerk_params(),
-            data={"active_organization_id": ""},
+            data={
+                "strategy": "password",
+                "password": self.password,
+            },
+            headers=self._form_headers(),
+        )
+        return response.json()
+
+    async def _touch_session(
+        self, client: httpx.AsyncClient, session_id: str, *, intent: Optional[str] = None
+    ) -> None:
+        url = f"{CLERK_BASE_URL}/client/sessions/{session_id}/touch"
+        logger.debug("Atualizando sessao {} em {}", session_id, url)
+        data = {"active_organization_id": ""}
+        if intent is not None:
+            data["intent"] = intent
+        response = await self._post_with_retry(
+            client,
+            url,
+            params=self._clerk_params(),
+            data=data,
             headers=self._form_headers(referer=f"{AGENT_BASE_URL}/"),
         )
         response.raise_for_status()
@@ -820,6 +885,58 @@ class AdaptaClientV2:
             "referer": referer,
         }
 
+    async def _post_with_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        params: Optional[Dict[str, str]] = None,
+        data: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        max_attempts: int = 3,
+    ) -> httpx.Response:
+        attempt = 1
+        while True:
+            response = await client.post(url, params=params, data=data, headers=headers)
+            if response.status_code != 429:
+                response.raise_for_status()
+                return response
+
+            delay = self._retry_delay_from_headers(response.headers)
+            logger.warning(
+                "POST {} retornou 429 (tentativa {}/{}). Aguardando {:.1f}s antes de tentar novamente.",
+                url,
+                attempt,
+                max_attempts,
+                delay,
+            )
+            if attempt >= max_attempts:
+                response.raise_for_status()
+            await asyncio.sleep(delay)
+            attempt += 1
+
+    def _retry_delay_from_headers(self, headers: httpx.Headers) -> float:
+        raw_retry = headers.get("Retry-After")
+        if raw_retry:
+            raw_retry = raw_retry.strip()
+            if raw_retry.isdigit():
+                delay = float(raw_retry)
+                if delay > 0:
+                    return delay
+            else:
+                try:
+                    retry_dt = parsedate_to_datetime(raw_retry)
+                except (TypeError, ValueError):
+                    retry_dt = None
+                if retry_dt is not None:
+                    if retry_dt.tzinfo is None:
+                        retry_dt = retry_dt.replace(tzinfo=timezone.utc)
+                    now = datetime.now(timezone.utc)
+                    delta = (retry_dt - now).total_seconds()
+                    if delta > 0:
+                        return delta
+        return max(LOGIN_THROTTLE_SECONDS, 5.0)
+
     def _extract_session_id(self, payload: Dict[str, Any]) -> Optional[str]:
         response = payload.get("response") if isinstance(payload, dict) else None
         if isinstance(response, dict):
@@ -842,6 +959,23 @@ class AdaptaClientV2:
                         return session_id
         return None
 
+    def _extract_sign_in_attempt_id(self, payload: Dict[str, Any]) -> Optional[str]:
+        if not isinstance(payload, dict):
+            return None
+        response = payload.get("response")
+        if isinstance(response, dict):
+            attempt_id = response.get("id")
+            if isinstance(attempt_id, str) and attempt_id:
+                return attempt_id
+        client_block = payload.get("client")
+        if isinstance(client_block, dict):
+            sign_in = client_block.get("sign_in")
+            if isinstance(sign_in, dict):
+                attempt_id = sign_in.get("id")
+                if isinstance(attempt_id, str) and attempt_id:
+                    return attempt_id
+        return None
+
     async def _ensure_authenticated(self) -> None:
         client = await self._ensure_client()
         if not self._session_id:
@@ -859,7 +993,11 @@ class AdaptaClientV2:
                 raise RuntimeError("Sessao nao disponivel para obtencao de token.")
 
             client = await self._ensure_client()
-            token = await self._fetch_production_token(client)
+            if not self._used_production_token:
+                token = await self._fetch_production_token(client)
+                self._used_production_token = True
+            else:
+                token = await self._refresh_session_token(client)
             self._bearer_token = token
             self._bearer_token_exp = self._extract_token_exp(token)
             return token
@@ -880,6 +1018,24 @@ class AdaptaClientV2:
         token = data.get("jwt")
         if not isinstance(token, str) or not token:
             raise RuntimeError(f"Resposta de token invalida: {data}")
+        return token
+
+    async def _refresh_session_token(self, client: httpx.AsyncClient) -> str:
+        if not self._session_id:
+            raise RuntimeError("Session ID nao disponivel para renovar token.")
+        await self._token_refresh_rate_limiter.wait()
+        url = f"{CLERK_BASE_URL}/client/sessions/{self._session_id}/tokens"
+        logger.debug("Renovando token da sessao em {}", url)
+        response = await client.post(
+            url,
+            params=self._clerk_params(),
+            headers=self._form_headers(referer=f"{AGENT_BASE_URL}/"),
+        )
+        response.raise_for_status()
+        data = response.json()
+        token = data.get("jwt")
+        if not isinstance(token, str) or not token:
+            raise RuntimeError(f"Resposta de renovacao de token invalida: {data}")
         return token
 
     def _extract_token_exp(self, token: str) -> float:
@@ -1093,6 +1249,16 @@ class AdaptaClientV2:
                         if plain_tool_text:
                             yield ("answer", plain_tool_text)
                         continue
+
+                    if event_type == "tool-output-error":
+                        tool_call_id = event.get("toolCallId")
+                        tool_name = event.get("toolName")
+                        error_text = (event.get("errorText") or "").strip() or "Erro desconhecido na ferramenta."
+                        raise ToolExecutionError(
+                            error_text,
+                            tool_name=tool_name,
+                            tool_call_id=tool_call_id,
+                        )
 
                     if event_type == "text-delta":
                         delta = event.get("delta")
@@ -1705,3 +1871,26 @@ async def _main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(_main())
+class _AsyncRateLimiter:
+    """Coopera para limitar a frequência de chamadas críticas (ex: login Clerk)."""
+
+    def __init__(self, min_interval: float) -> None:
+        self._interval = max(0.0, float(min_interval))
+        self._lock: Optional[asyncio.Lock] = None
+        self._next_allowed = 0.0
+
+    async def wait(self) -> None:
+        if self._interval <= 0:
+            return
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            now = time.monotonic()
+            delay = self._next_allowed - now
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._next_allowed = max(now, self._next_allowed) + self._interval
+
+
+_global_login_rate_limiter = _AsyncRateLimiter(LOGIN_THROTTLE_SECONDS)
+_global_token_refresh_rate_limiter = _AsyncRateLimiter(TOKEN_REFRESH_THROTTLE_SECONDS)
