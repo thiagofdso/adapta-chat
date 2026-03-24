@@ -522,6 +522,7 @@ async def process_job(pdf_path: str) -> None:
     job_dict = _row_to_dict(job)
 
     update_job_status(job_dict["id"], STATUS_RUNNING)
+    logger.info("Iniciando pipeline de microaprendizado para {}. Saida em {}", pdf_path, output_dir)
 
     analysis_path = output_dir / "analise_livro.md"
     sessions_path = output_dir / "sessoes.json"
@@ -539,6 +540,7 @@ async def process_job(pdf_path: str) -> None:
         # Stage 1: Book analysis
         job = get_or_create_job(pdf_path, output_dir)
         if job["stage1_status"] != STATUS_DONE or not analysis_path.exists():
+            logger.info("Stage 1 - Gerando analise do livro para {}", pdf_path)
             update_job_stage(job["id"], 1, STATUS_RUNNING)
             prompt = _load_prompt("1-analiselivro.md")
             prompt = re.sub(
@@ -555,6 +557,7 @@ async def process_job(pdf_path: str) -> None:
         # Stage 2: Sessions JSON
         job = get_or_create_job(pdf_path, output_dir)
         if job["stage2_status"] != STATUS_DONE or not sessions_path.exists():
+            logger.info("Stage 2 - Construindo JSON de sessoes para {}", pdf_path)
             update_job_stage(job["id"], 2, STATUS_RUNNING)
             analysis_text = analysis_path.read_text(encoding="utf-8").strip()
             if not analysis_text:
@@ -572,6 +575,7 @@ async def process_job(pdf_path: str) -> None:
         # Stage 3: Review sessions
         job = get_or_create_job(pdf_path, output_dir)
         if job["stage3_status"] != STATUS_DONE or not review_path.exists() or not final_json_path.exists():
+            logger.info("Stage 3 - Revisando sessoes e consolidando JSON final para {}", pdf_path)
             update_job_stage(job["id"], 3, STATUS_RUNNING)
             sessions_json = json.loads(sessions_path.read_text(encoding="utf-8"))
             sessions_payload = json.dumps(sessions_json, ensure_ascii=False, indent=2)
@@ -630,6 +634,7 @@ async def process_job(pdf_path: str) -> None:
             # Step 4: generate base lesson
             lesson = _row_to_dict(get_lesson_by_id(lesson["id"]))
             if lesson["step4_status"] != STATUS_DONE or not paths["base"].exists():
+                logger.info("Step 4 - Gerando markdown base da microaula {}", microaula_id)
                 update_lesson_step(lesson["id"], 4, STATUS_RUNNING)
                 prompt = _load_prompt("4-geracao-aula.md")
                 microaula_payload = microaula_obj["microaula_obj"]
@@ -657,6 +662,7 @@ async def process_job(pdf_path: str) -> None:
             # Step 5: enrich lesson
             lesson = _row_to_dict(get_lesson_by_id(lesson["id"]))
             if lesson["step5_status"] != STATUS_DONE or not paths["aula"].exists():
+                logger.info("Step 5 - Enriquecendo microaula {}", microaula_id)
                 update_lesson_step(lesson["id"], 5, STATUS_RUNNING)
                 base_markdown = paths["base"].read_text(encoding="utf-8")
                 prompt = _load_prompt("5-enriquecimento-aula.md")
@@ -673,6 +679,7 @@ async def process_job(pdf_path: str) -> None:
             # Step 6: audio script
             lesson = _row_to_dict(get_lesson_by_id(lesson["id"]))
             if lesson["step6_status"] != STATUS_DONE or not paths["audio"].exists():
+                logger.info("Step 6 - Criando roteiro de audio para {}", microaula_id)
                 update_lesson_step(lesson["id"], 6, STATUS_RUNNING)
                 enriched_markdown = paths["aula"].read_text(encoding="utf-8")
                 prompt = _load_prompt("6-criacao-roteiro.md")
@@ -698,6 +705,7 @@ async def process_job(pdf_path: str) -> None:
                 except Exception as exc:
                     logger.warning("Falha ao gerar markdown de perguntas: {}", exc)
             if lesson["step7_status"] != STATUS_DONE or not paths["perguntas"].exists():
+                logger.info("Step 7 - Gerando perguntas para {}", microaula_id)
                 update_lesson_step(lesson["id"], 7, STATUS_RUNNING)
                 enriched_markdown = paths["aula"].read_text(encoding="utf-8")
                 prompt = _load_prompt("7-criacao-perguntas.md")
@@ -728,6 +736,7 @@ async def process_job(pdf_path: str) -> None:
             # Step 8: questions review
             lesson = _row_to_dict(get_lesson_by_id(lesson["id"]))
             if lesson["step8_status"] != STATUS_DONE or not paths["relatorio"].exists():
+                logger.info("Step 8 - Revisando perguntas e gerando relatorio para {}", microaula_id)
                 update_lesson_step(lesson["id"], 8, STATUS_RUNNING)
                 questions_payload = paths["perguntas"].read_text(encoding="utf-8")
                 prompt = _load_prompt("8-revisao-perguntas")

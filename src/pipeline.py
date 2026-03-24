@@ -1473,16 +1473,24 @@ async def main():
     parser.add_argument('--input', type=str, help='Caminho para uma pasta com arquivos .txt ou .pdf para processar.')
     args = parser.parse_args()
 
+    logger.info("Pipeline iniciado com input_dir={}", args.input or "banco de jobs pendentes")
     initialize_database()
 
-    if args.input:
-        process_input_folder(args.input)
-        await run_stage1_index_creation()
-        await process_pending_knowledges()
-        await run_stage3_cleanup()
-    else:
-        await process_pending_knowledges()
-        await run_stage3_cleanup()
+    try:
+        if args.input:
+            logger.info("Processando pasta manual fornecida: {}", args.input)
+            process_input_folder(args.input)
+            await run_stage1_index_creation()
+            await process_pending_knowledges()
+            await run_stage3_cleanup()
+        else:
+            logger.info("Nenhuma pasta informada; executando stages pendentes do banco.")
+            await process_pending_knowledges()
+            await run_stage3_cleanup()
+        logger.info("Pipeline finalizado com sucesso.")
+    except Exception as exc:
+        logger.exception("Falha geral no pipeline: {}", exc)
+        raise
 
 async def _ensure_valid_json_patch(
     candidate: Optional[str],
@@ -1513,4 +1521,3 @@ async def _ensure_valid_json_patch(
 
 if __name__ == '__main__':
     asyncio.run(main())
-

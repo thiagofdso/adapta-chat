@@ -62,6 +62,9 @@ def initialize_generators():
 
 def main():
     st.title("Adapta.one Chat Interface")
+    if not st.session_state.get("_chat_app_initialized"):
+        logger.info("Interface de chat inicializada.")
+        st.session_state["_chat_app_initialized"] = True
 
     generators = initialize_generators()
 
@@ -69,12 +72,14 @@ def main():
     with st.sidebar:
         st.header("Controls")
         if st.button("+ New Chat"):
+            logger.info("Usuario solicitou novo chat.")
             # limpa chat remoto se existir
             current_chat = st.session_state.get("current_chat_id")
             if current_chat:
                 try:
                     client = get_shared_client()
                     run_async_task(client.excluir_chat(current_chat))
+                    logger.info("Chat remoto {} excluido apos reset.", current_chat)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Falha ao excluir chat remoto {}: {}", current_chat, exc)
             st.session_state.messages = []
@@ -94,6 +99,11 @@ def main():
     user_input = st.chat_input("What is up?")
     if user_input is not None:
         prompt_to_send = user_input if user_input.strip() else "Por favor, continue gerando a sua resposta."
+        logger.info(
+            "Nova mensagem recebida com {} caracteres para o modelo {}.",
+            len(prompt_to_send),
+            model_name,
+        )
 
         st.session_state.messages.append({"role": "user", "content": prompt_to_send})
         with st.chat_message("user"):
@@ -108,6 +118,11 @@ def main():
 
                 if st.session_state.current_chat_id is None:
                     st.session_state.current_chat_id = selected_generator.generate_chat_id()
+                    logger.info(
+                        "Gerado novo chat_id {} para o modelo {}.",
+                        st.session_state.current_chat_id,
+                        model_name,
+                    )
 
                 response = run_async_task(
                     selected_generator.call_model_with_messages(
@@ -119,9 +134,19 @@ def main():
                 if response:
                     placeholder.markdown(response)
                     st.session_state.messages.append({"role": "assistant", "content": response})
+                    logger.info(
+                        "Resposta do modelo {} registrada ({} caracteres).",
+                        model_name,
+                        len(response),
+                    )
                 else:
                     placeholder.error("Failed to get a response from the model.")
                     st.session_state.messages.append({"role": "assistant", "content": "Failed to get a response."})
+                    logger.warning(
+                        "Modelo {} nao retornou resposta para chat_id {}.",
+                        model_name,
+                        st.session_state.current_chat_id,
+                    )
 
             except Exception as exc:
                 error_message = f"An error occurred: {exc}"

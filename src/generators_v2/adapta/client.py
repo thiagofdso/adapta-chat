@@ -166,7 +166,7 @@ class AdaptaClientV2:
             if missing:
                 logger.warning("Cookies esperados nao encontrados: {}", ", ".join(sorted(missing)))
 
-            logger.info("Login concluído com session_id={}", self._session_id)
+            logger.debug("Login concluído com session_id={}", self._session_id)
             return AuthResult(session_id=self._session_id, cookies=cookies)
 
     async def call_model(
@@ -1005,9 +1005,9 @@ class AdaptaClientV2:
         #message_id = _generate_uuid7_like()
         self._last_chat_id = chat_identifier
         if chat_id:
-            logger.info(f"Reutilizando chat_id={chat_identifier} fornecido para nova requisicao de chat.")
+            logger.debug(f"Reutilizando chat_id={chat_identifier} fornecido para nova requisicao de chat.")
         else:
-            logger.info(f"Gerado chat_id={chat_identifier} para nova requisicao de chat.")
+            logger.debug(f"Gerado chat_id={chat_identifier} para nova requisicao de chat.")
         #analytics_tasks = [
         #    asyncio.create_task(self._register_chat_view(chat_id)),
         #    asyncio.create_task(self._send_amplitude_event(chat_id, model)),

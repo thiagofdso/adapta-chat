@@ -189,13 +189,16 @@ async def main(auto: bool = False, upload_delay: float = UPLOAD_DELAY_SECONDS) -
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     generator = Claude45SonnetGenerator()
 
+    logger.info("Destilador iniciado com auto={} e upload_delay={}s", auto, upload_delay)
     pdfs = sorted(p for p in SOURCE_DIR.glob("*.pdf") if p.is_file())
     if not pdfs:
         logger.info("Nenhum PDF encontrado em {}", SOURCE_DIR)
         return
 
-    for pdf in pdfs:
+    for idx, pdf in enumerate(pdfs, start=1):
+        logger.info("Iniciando processamento {}/{}: {}", idx, len(pdfs), pdf.name)
         await process_book(pdf, generator, auto=auto, upload_delay=upload_delay)
+    logger.info("Destilador finalizado. Livros processados: {}", len(pdfs))
 
 
 if __name__ == "__main__":

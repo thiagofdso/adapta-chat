@@ -157,6 +157,9 @@ def load_model_config():
 # --- Main Application Logic ---
 def main():
     st.title("🤖 Multi-Agent Debate Chat")
+    if not st.session_state.get("_debate_app_initialized"):
+        logger.info("Interface de debate inicializada.")
+        st.session_state["_debate_app_initialized"] = True
 
     # Load custom prompts and model config from files
     loaded_prompts = load_custom_prompts()
@@ -197,11 +200,14 @@ def main():
     async def ensure_shared_login() -> None:
         """Garante login do client compartilhado apenas uma vez."""
         if st.session_state.auth_done:
+            logger.debug("Sessao compartilhada ja autenticada; reutilizando login existente.")
             return
+        logger.info("Iniciando login compartilhado para o app de debate.")
         client = get_shared_client()
         try:
             await client.simulate_login()
             st.session_state.auth_done = True
+            logger.info("Login compartilhado concluido com sucesso.")
         except Exception as exc:  # noqa: BLE001
             logger.error("Falha ao autenticar client compartilhado: {}", exc)
             raise
@@ -276,6 +282,15 @@ def main():
                 st.session_state.debate_started = True
                 st.session_state.current_round = 1
                 st.session_state.manager_agent = Gemini3ProPreviewGenerator(client=get_shared_client())  # Manager with v2
+                topic_preview = (st.session_state.initial_problem or "").replace("\n", " ")
+                if len(topic_preview) > 140:
+                    topic_preview = topic_preview[:137] + "..."
+                logger.info(
+                    "Debate iniciado com {} agentes e {} rounds. Topico: {}",
+                    st.session_state.num_agents,
+                    st.session_state.num_rounds,
+                    topic_preview or "<vazio>",
+                )
                 
                 # Assign models to worker agents based on selection or rotation
                 st.session_state.worker_agents = {}
@@ -318,6 +333,7 @@ def main():
                 st.rerun()
             else:
                 st.warning("Please enter a problem or topic.")
+                logger.warning("Tentativa de iniciar debate sem definir o problema inicial.")
     else:
         # --- Debate View ---
         st.sidebar.header("Debate in Progress")
@@ -327,6 +343,7 @@ def main():
         st.sidebar.write(f"**Current Round:** {st.session_state.current_round}")
 
         if st.sidebar.button("+ Chat"):
+            logger.info("Debate resetado manualmente via botao + Chat.")
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
@@ -339,6 +356,12 @@ def main():
             previous_memories = st.session_state.agent_memories.copy()
 
             await ensure_shared_login()
+            logger.info(
+                "Executando round {} de {} com {} agentes.",
+                st.session_state.current_round,
+                st.session_state.num_rounds,
+                len(st.session_state.worker_agents),
+            )
 
             for agent_name, (model_name, agent_instance) in st.session_state.worker_agents.items():
                 other_agents_memories = {name: mem for name, mem in previous_memories.items() if name != agent_name}
@@ -363,6 +386,15 @@ def main():
             
             # Gather results from all tasks
             results = await asyncio.gather(*tasks, return_exceptions=True)
+            success_count = sum(
+                1 for res in results if not isinstance(res, Exception) and bool(res)
+            )
+            logger.info(
+                "Round {} concluido. Respostas validas: {} de {}.",
+                st.session_state.current_round,
+                success_count,
+                len(results),
+            )
             return results
 
         def render_round_navigation():
@@ -448,6 +480,7 @@ def main():
                     summary_prompt = get_manager_summary_prompt(st.session_state.initial_problem, st.session_state.agent_memories)
                     manager_history = [{"role": "user", "content": summary_prompt}]
                     try:
+                        logger.info("Gerando conclusao final do debate para o topico atual.")
                         final_conclusion_text = run_agent_call_sync(
                             st.session_state.manager_agent,
                             manager_history,
@@ -455,10 +488,15 @@ def main():
                         )
                         if final_conclusion_text:
                             st.session_state.final_conclusion = remove_think_tags(final_conclusion_text)
+                            logger.info(
+                                "Conclusao final registrada com {} caracteres.",
+                                len(st.session_state.final_conclusion),
+                            )
                         else:
                             st.session_state.final_conclusion = "The manager agent did not provide a final conclusion."
                             st.warning(st.session_state.final_conclusion)
-                        
+                            logger.warning("Manager nao retornou conclusao final para o debate.")
+
                         # --- Auto-save Results ---
                         with st.spinner("Saving results to `debate.md`..."):
                             md_content = "# Debate Results\n\n"
@@ -484,6 +522,7 @@ def main():
                             with open("debate.md", "w", encoding="utf-8") as f:
                                 f.write(md_content)
                             st.success("Results successfully saved to `debate.md`!")
+                            logger.info("Resultados do debate salvos em debate.md.")
                             # Limpeza de chats remotos
                             try:
                                 client = get_shared_client()
@@ -503,6 +542,7 @@ def main():
                         error_msg = f"Could not generate or save final conclusion: {e}"
                         st.session_state.final_conclusion = error_msg
                         st.error(error_msg)
+                        logger.error("Falha ao gerar ou salvar a conclusao final: {}", e)
 
             # --- Display the final conclusion from session state ---
             if st.session_state.final_conclusion:
