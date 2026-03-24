@@ -9,7 +9,7 @@ description = "A project to interact with Adapta.one API for content generation.
 authors = [
   { name="Thiago Oliveira", email="thiagofdso.ufpa@gmail.com" },
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10,<4.0"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -23,10 +23,14 @@ dependencies = [
     "streamlit",
     "loguru",
     "nest-asyncio (>=1.6.0,<2.0.0)",
+    "docling[cpu]>=2.81.0,<3.0.0",
 ]
 
 [tool.poetry]
 packages = [{include = "*", from = "src"}]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.2"
 
 [project.urls]
 "Homepage" = "https://github.com/thiagofdso/adapta-chat"
