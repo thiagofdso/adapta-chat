@@ -1143,6 +1143,36 @@ def _build_docling_blocks(file_paths: List[str], base_dir: Optional[str]) -> str
     return "\n\n".join(blocks)
 
 
+def _append_index_json_to_prompt(
+    prompt: str,
+    index_paths: Optional[List[str]],
+    display_names: Optional[List[str]],
+    *,
+    max_chars: int = 200_000,
+) -> str:
+    if not index_paths:
+        return prompt
+
+    sections: List[str] = ["\n\n# INDICE ATUAL (JSON)\n"]
+    for idx, raw_path in enumerate(index_paths):
+        path = Path(raw_path)
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Falha ao ler indice %s: %s", path, exc)
+            continue
+        snippet = _truncate_text(content, max_chars=max_chars)
+        if display_names and idx < len(display_names) and display_names[idx]:
+            title = display_names[idx]
+        else:
+            title = path.name
+        sections.append(f"## {title}\n```json\n{snippet}\n```\n")
+
+    if len(sections) == 1:
+        return prompt
+    return prompt + "".join(sections)
+
+
 def process_input_folder(folder_path):
     logger.info(f"Escaneando a pasta de entrada: {folder_path}")
     if not os.path.isdir(folder_path):
@@ -1219,9 +1249,12 @@ async def run_stage1_index_creation():
             existing_index_paths=index_part_paths if has_existing_index else None,
             existing_index_display_names=index_display_names,
         )
+        prompt = _append_index_json_to_prompt(
+            prompt,
+            index_part_paths if has_existing_index else None,
+            index_display_names,
+        )
         source_files = [job['file_path']]
-        if index_part_paths:
-            source_files.extend(index_part_paths)
 
         temp_raw_path = Path(INDEXES_PATH) / 'temp.json'
         patch_debug_paths: List[Path] = []
@@ -1279,14 +1312,20 @@ async def run_stage1_index_creation():
                     except (DoclingConversionError, OSError) as conv_exc:
                         logger.error("Falha ao converter %s via Docling: %s", current_file_name, conv_exc)
                         raise
+                    docling_prompt = generate_docling_extraction_prompt(
+                        current_file_name,
+                        docling_blocks,
+                        existing_index_paths=index_part_paths if has_existing_index else None,
+                        existing_index_display_names=index_display_names,
+                    )
+                    docling_prompt = _append_index_json_to_prompt(
+                        docling_prompt,
+                        index_part_paths if has_existing_index else None,
+                        index_display_names,
+                    )
                     conversation = [{
                         'role': 'user',
-                        'content': generate_docling_extraction_prompt(
-                            current_file_name,
-                            docling_blocks,
-                            existing_index_paths=index_part_paths if has_existing_index else None,
-                            existing_index_display_names=index_display_names,
-                        ),
+                        'content': docling_prompt,
                     }]
                     _write_conversation_log(conversation)
                     accumulated_raw = ""
@@ -1297,7 +1336,7 @@ async def run_stage1_index_creation():
                         except Exception:
                             pass
                     docling_mode = True
-                    current_source_files = list(index_part_paths) if index_part_paths else []
+                    current_source_files = []
                     continue
 
                 accumulated_raw += raw_response
