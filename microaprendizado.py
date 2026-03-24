@@ -18,7 +18,9 @@ if str(SRC_DIR) not in sys.path:
 
 from generators_v2.adapta.claude_45_sonnet_generator import Claude45SonnetGenerator
 from utils.logger import logger
+from utils.response_validator import requires_processing_retry
 from utils.text_cleaner import remove_think_tags
+from utils.session_guard import LogoutGuard
 
 
 PROMPTS_DIR = BASE_DIR / "microaprendizado"
@@ -31,6 +33,7 @@ STATUS_DONE = 3
 
 RETRY_LIMIT = 4
 RETRY_INITIAL_DELAY = 2.0
+MIN_MODEL_CALL_DELAY_SECONDS = 60.0
 
 
 def _slugify(text: str) -> str:
@@ -383,14 +386,29 @@ async def _call_model_text(
                 [{"role": "user", "content": prompt}],
                 files=files,
             )
-            cleaned = remove_think_tags(str(response))
-            return cleaned
         except Exception as exc:
             last_exc = exc
             logger.warning("Falha ao chamar modelo (tentativa {}): {}", attempt, exc)
             if attempt < retries:
-                await asyncio.sleep(delay)
-                delay *= 2
+                sleep_time = max(delay, MIN_MODEL_CALL_DELAY_SECONDS)
+                await asyncio.sleep(sleep_time)
+                delay = max(delay * 2, MIN_MODEL_CALL_DELAY_SECONDS)
+            continue
+
+        cleaned = remove_think_tags(str(response))
+        if requires_processing_retry(cleaned):
+            logger.warning(
+                "Resposta do modelo indicou que não foi possível processar o arquivo (tentativa {}/{})",
+                attempt,
+                retries,
+            )
+            if attempt < retries:
+                sleep_time = max(delay, MIN_MODEL_CALL_DELAY_SECONDS)
+                await asyncio.sleep(sleep_time)
+                delay = max(delay * 2, MIN_MODEL_CALL_DELAY_SECONDS)
+                continue
+            raise RuntimeError("Modelo nao conseguiu processar o arquivo.")
+        return cleaned
     raise RuntimeError("Falha ao chamar modelo.") from last_exc
 
 
@@ -534,6 +552,8 @@ async def process_job(pdf_path: str) -> None:
     _normalize_job_stage(job_dict, 3, review_path)
 
     generator = Claude45SonnetGenerator()
+    guard = LogoutGuard(generator.client, label="microaprendizado")
+    guard.register()
     upload_cache: Dict[str, Dict[str, Any]] = {}
 
     try:
@@ -772,10 +792,7 @@ async def process_job(pdf_path: str) -> None:
         update_job_status(job_dict["id"], STATUS_PENDING)
         raise
     finally:
-        try:
-            await generator.client.close()
-        except Exception:
-            pass
+        await guard.close_now()
 
 
 def get_lesson_by_id(lesson_id: int) -> sqlite3.Row:
