@@ -16,6 +16,7 @@ from database import (
     count_knowledges_by_folder,
     create_job,
     get_completed_jobs_by_stage,
+    get_job_by_id,
     get_pending_jobs_by_stage,
     get_pending_knowledges,
     initialize_database,
@@ -1200,9 +1201,14 @@ def process_input_folder(folder_path):
                 create_job(file_path, entry.name, current_dir)
 
 
-async def run_stage1_index_creation(mode: str):
+async def run_stage1_index_creation(mode: str, job_filter: Optional[int] = None):
     logger.info('Iniciando Estagio 1: Criacao de Indice de Conhecimento.')
     pending_jobs = get_pending_jobs_by_stage(stage_id=1)
+    if job_filter is not None:
+        pending_jobs = [job for job in pending_jobs if job['id'] == job_filter]
+        if not pending_jobs:
+            logger.info("Job %s nao esta pendente no Estagio 1.", job_filter)
+            return
 
     if not pending_jobs:
         logger.info('Nenhum job pendente para o Estagio 1.')
@@ -1468,10 +1474,23 @@ async def run_stage1_index_creation(mode: str):
         gemini_guard.close_now(),
     )
 
-async def process_pending_knowledges(mode: str):
+async def process_pending_knowledges(mode: str, job_filter: Optional[int] = None):
     _ensure_pending_knowledges_synced()
     logger.info('Iniciando Estagio 2: Criacao de Arquivos de Conhecimento.')
     pending_rows = list(get_pending_knowledges())
+
+    folder_filter: Optional[str] = None
+    if job_filter is not None:
+        job_row = get_job_by_id(job_filter)
+        if not job_row:
+            logger.info("Job %s nao encontrado; Estagio 2 ignorado.", job_filter)
+            return
+        folder_filter = job_row['folder_path']
+
+    if folder_filter:
+        pending_rows = [
+            row for row in pending_rows if (row.get('knowledge_folder_path') or '') == folder_filter
+        ]
 
     if not pending_rows:
         logger.info('Nenhum conhecimento pendente para processar.')
@@ -1719,9 +1738,11 @@ def _ensure_pending_knowledges_synced():
         logger.info(f"{len(payload)} conhecimentos sincronizados a partir de {get_index_file_path(folder_path)}.")
 
 
-async def run_stage3_cleanup():
+async def run_stage3_cleanup(job_filter: Optional[int] = None):
     logger.info('Iniciando Estagio 3: Limpeza e Finalizacao de Jobs.')
     completed_stage2_jobs = get_completed_jobs_by_stage(stage_id=2)
+    if job_filter is not None:
+        completed_stage2_jobs = [job for job in completed_stage2_jobs if job['id'] == job_filter]
 
     if not completed_stage2_jobs:
         logger.info('Nenhum job para finalizar.')
@@ -1740,23 +1761,30 @@ async def main():
     parser = argparse.ArgumentParser(description='Pipeline de extracao e geracao de conhecimento.')
     parser.add_argument('--input', type=str, help='Caminho para uma pasta com arquivos .txt ou .pdf para processar.')
     parser.add_argument('--mode', choices=['upload', 'docling'], default='upload', help='Define se os arquivos serao enviados (upload) ou convertidos via Docling (docling).')
+    parser.add_argument('--job', type=int, help='Filtra a execucao para um unico job cadastrado no banco.')
     args = parser.parse_args()
     mode = (args.mode or 'upload').lower()
+    job_filter = args.job
 
-    logger.info("Pipeline iniciado com input_dir={} | mode={}", args.input or "banco de jobs pendentes", mode)
+    logger.info(
+        "Pipeline iniciado com input_dir={} | mode={} | job={}",
+        args.input or "banco de jobs pendentes",
+        mode,
+        job_filter or "todos",
+    )
     initialize_database()
 
     try:
         if args.input:
             logger.info("Processando pasta manual fornecida: {}", args.input)
             process_input_folder(args.input)
-            await run_stage1_index_creation(mode)
-            await process_pending_knowledges(mode)
-            await run_stage3_cleanup()
+            await run_stage1_index_creation(mode, job_filter=job_filter)
+            await process_pending_knowledges(mode, job_filter=job_filter)
+            await run_stage3_cleanup(job_filter=job_filter)
         else:
             logger.info("Nenhuma pasta informada; executando stages pendentes do banco.")
-            await process_pending_knowledges(mode)
-            await run_stage3_cleanup()
+            await process_pending_knowledges(mode, job_filter=job_filter)
+            await run_stage3_cleanup(job_filter=job_filter)
         logger.info("Pipeline finalizado com sucesso.")
     except Exception as exc:
         logger.exception("Falha geral no pipeline: {}", exc)

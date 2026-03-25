@@ -135,6 +135,15 @@ def get_pending_jobs_by_stage(stage_id: int) -> Iterable[sqlite3.Row]:
     return jobs
 
 
+def get_job_by_id(job_id: int) -> Optional[sqlite3.Row]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    job = cursor.fetchone()
+    conn.close()
+    return job
+
+
 def update_job_state(job_id: int, stage_id: int, status_id: int) -> None:
     conn = get_db_connection()
     cursor = conn.cursor()
