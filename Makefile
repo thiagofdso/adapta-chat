@@ -15,7 +15,7 @@ chat:
 	$(POETRY) run streamlit run src/app_chat.py
 
 debate:
-	$(POETRY) run streamlit run src/app_debate.py
+	$(POETRY) run streamlit run src/app_debate.py --server.port 8502
 
 micro-teste1:
 	$(POETRY) run python prompt_tests_microaprendizado.py
