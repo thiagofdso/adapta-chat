@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+import ssl
 
 from database import (
     add_knowledges_from_json,
@@ -33,6 +34,17 @@ from utils.response_validator import ResponseValidationError
 from utils.session_guard import LogoutGuard
 from prompt_manager import generate_docling_extraction_prompt, generate_knowledge_extraction_prompt
 from utils.text_cleaner import remove_think_tags
+import requests
+
+ssl._create_default_https_context = ssl._create_unverified_context
+old_request = requests.Session.request
+
+def new_request(self, *args, **kwargs):
+    kwargs['verify'] = False
+    return old_request(self, *args, **kwargs)
+
+requests.Session.request = new_request
+
 
 INDEXES_PATH = 'indexes'
 DOCS_PREFIX = 'docs_'

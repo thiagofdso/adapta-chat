@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,10 +84,9 @@ def _get_converter() -> Any:
 
 def _resolve_cache_path(source_path: Path, cache_dir: Path) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    stat = source_path.stat()
-    cache_key = f"{source_path.resolve()}::{stat.st_mtime_ns}"
-    digest = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()
-    return cache_dir / f"{source_path.stem}_{digest}.txt"
+    # Use only the file stem to name the cache, avoiding job-specific suffixes.
+    # This keeps the cache stable and human-readable while still grouping by name.
+    return cache_dir / f"{source_path.stem}.txt"
 
 
 def _trim_text(text: str, max_chars: int) -> str:
