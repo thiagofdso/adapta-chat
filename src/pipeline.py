@@ -7,8 +7,9 @@ import os
 import re
 import tempfile
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 from database import (
     add_knowledges_from_json,
@@ -27,7 +28,6 @@ from generators_v2.adapta.claude_45_sonnet_generator import Claude45SonnetGenera
 from generators_v2.adapta.gemini_3_pro_preview_generator import Gemini3ProPreviewGenerator
 from generators_v2.adapta.gpt_5_generator import GPT5Generator
 from generators_v2.adapta.client import ToolExecutionError
-from utils.docling_converter import DoclingConversionError, MAX_TEXT_CHARS, convert_pdf_to_text
 from utils.logger import logger
 from utils.response_validator import ResponseValidationError
 from utils.session_guard import LogoutGuard
@@ -46,6 +46,42 @@ MAX_INDEX_CHUNK_SIZE = 300
 UPLOAD_DELAY_SECONDS = 2.0
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 STAGE2_VALIDATION_RETRY_LIMIT = 3
+DOC_TEXT_DEFAULT_MAX_CHARS = 60_000
+
+
+class DoclingSupportUnavailable(RuntimeError):
+    """Disparado quando o modo Docling e requisitado mas nao foi possivel carregar a dependencia."""
+
+
+@dataclass(frozen=True)
+class _DoclingSupport:
+    converter: Callable[[Union[str, Path]], Any]
+    error_cls: Type[BaseException]
+    max_chars: int
+
+
+_docling_support_cache: Optional[_DoclingSupport] = None
+
+
+def _get_docling_support() -> _DoclingSupport:
+    global _docling_support_cache
+    if _docling_support_cache is not None:
+        return _docling_support_cache
+    try:
+        from utils import docling_converter as docling_module
+    except Exception as exc:
+        raise DoclingSupportUnavailable(
+            "Modo Docling requer a dependencia 'docling'. Certifique-se de instala-la antes de usar --mode docling."
+        ) from exc
+
+    converter = getattr(docling_module, "convert_pdf_to_text", None)
+    error_cls = getattr(docling_module, "DoclingConversionError", RuntimeError)
+    max_chars = getattr(docling_module, "MAX_TEXT_CHARS", DOC_TEXT_DEFAULT_MAX_CHARS)
+    if converter is None:
+        raise DoclingSupportUnavailable("Modulo utils.docling_converter nao expõe convert_pdf_to_text.")
+
+    _docling_support_cache = _DoclingSupport(converter=converter, error_cls=error_cls, max_chars=max_chars)
+    return _docling_support_cache
 def _load_stage2_concurrency() -> int:
     raw = os.getenv("STAGE2_CONCURRENCY")
     if raw:
@@ -1111,7 +1147,7 @@ def _resolve_display_name(file_path: Path, base_dir: Optional[str]) -> str:
     return file_path.name
 
 
-def _truncate_text(text: str, max_chars: int = MAX_TEXT_CHARS) -> str:
+def _truncate_text(text: str, max_chars: int = DOC_TEXT_DEFAULT_MAX_CHARS) -> str:
     text = text.strip()
     if len(text) <= max_chars:
         return text
@@ -1120,15 +1156,17 @@ def _truncate_text(text: str, max_chars: int = MAX_TEXT_CHARS) -> str:
 
 
 def _extract_docling_text(file_path: str) -> str:
+    support = _get_docling_support()
     path = Path(file_path)
     if path.suffix.lower() == ".pdf":
-        result = convert_pdf_to_text(path)
+        result = support.converter(path)
         return result.text
     text = path.read_text(encoding="utf-8", errors="ignore")
-    return _truncate_text(text)
+    return _truncate_text(text, max_chars=support.max_chars)
 
 
 def _build_docling_blocks(file_paths: List[str], base_dir: Optional[str]) -> str:
+    support = _get_docling_support()
     blocks: List[str] = []
     for raw_path in file_paths:
         path = Path(raw_path)
@@ -1140,7 +1178,7 @@ def _build_docling_blocks(file_paths: List[str], base_dir: Optional[str]) -> str
             continue
         blocks.append(f"## {display_name}\n{text.strip()}")
     if not blocks:
-        raise DoclingConversionError("Docling nao retornou texto utilizavel para o fallback.")
+        raise support.error_cls("Docling nao retornou texto utilizavel para o fallback.")
     return "\n\n".join(blocks)
 
 
