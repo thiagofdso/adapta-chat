@@ -1515,7 +1515,7 @@ async def run_stage1_index_creation(mode: str, job_filter: Optional[int] = None)
 async def process_pending_knowledges(mode: str, job_filter: Optional[int] = None):
     _ensure_pending_knowledges_synced()
     logger.info('Iniciando Estagio 2: Criacao de Arquivos de Conhecimento.')
-    pending_rows = list(get_pending_knowledges())
+    pending_rows = [dict(row) for row in get_pending_knowledges()]
 
     folder_filter: Optional[str] = None
     if job_filter is not None:
@@ -1525,9 +1525,19 @@ async def process_pending_knowledges(mode: str, job_filter: Optional[int] = None
             return
         folder_filter = job_row['folder_path']
 
+    def _row_get_value(row: Any, key: str, default: Any = None) -> Any:
+        if isinstance(row, dict):
+            return row.get(key, default)
+        try:
+            return row[key]
+        except Exception:
+            return default
+
     if folder_filter:
         pending_rows = [
-            row for row in pending_rows if (row.get('knowledge_folder_path') or '') == folder_filter
+            row
+            for row in pending_rows
+            if (_row_get_value(row, 'knowledge_folder_path', '') or '') == folder_filter
         ]
 
     if not pending_rows:
@@ -1558,7 +1568,7 @@ async def process_pending_knowledges(mode: str, job_filter: Optional[int] = None
         async with semaphore:
             if abort_event.is_set():
                 return
-            folder = row.get('knowledge_folder_path') or ''
+            folder = _row_get_value(row, 'knowledge_folder_path', '') or ''
             sanitized_row = dict(row)
             sanitized_row['sanitized_index_json'] = get_sanitized_index_json(folder)
             sanitized_row['knowledge_prompt_name'] = _sanitize_reference_name(
