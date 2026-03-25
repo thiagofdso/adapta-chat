@@ -11,6 +11,7 @@ Sua missão é:
 * Preencha "Conhecimentos Relacionados" com nomes presentes no índice bruto em CONTEXTO EXTRA no formato [[Nome Conhecimento]].
 * Não solicite uploads adicionais.
 * Para seções que não se aplicarem, escreva "Nao se aplica".
+* Não insira comentários como **compreendi sua solicitação**, **entendi**, responda diretamente com o documento gerado
 
 # CONTEXTO EXTRA
 

@@ -855,6 +855,7 @@ async def _call_generator_with_existing_uploads(
     prompt: Optional[str],
     upload_infos: List[Tuple[Dict[str, Any], bool, Path]],
     messages: Optional[List[Dict[str, str]]] = None,
+    keep_chat: bool = False,
 ) -> str:
     if messages is None:
         if prompt is None:
@@ -870,10 +871,11 @@ async def _call_generator_with_existing_uploads(
         files=files_payload,
     )
     logger.debug('Chamada ao modelo concluida com sucesso.')
-    try:
-        await _cleanup_chat(generator)
-    except Exception:
-        pass
+    if not keep_chat:
+        try:
+            await _cleanup_chat(generator)
+        except Exception:
+            pass
     return response
 
 
@@ -942,6 +944,7 @@ async def _call_generator_with_uploads(
     uploads: List[Tuple[Path, bool]],
     messages: Optional[List[Dict[str, str]]] = None,
     upload_delay: float = 0.0,
+    keep_chat: bool = False,
 ) -> str:
     upload_infos = await _perform_uploads(generator, uploads, upload_delay)
     try:
@@ -950,6 +953,7 @@ async def _call_generator_with_uploads(
             prompt,
             upload_infos,
             messages=messages,
+            keep_chat=keep_chat,
         )
     finally:
         await _cleanup_upload_infos(generator, upload_infos, cleanup_local_paths=True)
@@ -987,6 +991,7 @@ async def _call_with_retries(
     upload_context: Optional[Dict[Any, List[Tuple[Dict[str, Any], bool, Path]]]] = None,
     upload_delay: float = 0.0,
     upload_unique_hint: Optional[str] = None,
+    keep_chat: bool = False,
 ) -> str:
     if prompt is None and messages is None:
         raise ValueError("Prompt ou mensagens devem ser fornecidos para a chamada ao gerador.")
@@ -1056,6 +1061,7 @@ async def _call_with_retries(
                         prompt,
                         upload_infos,
                         messages=messages,
+                        keep_chat=keep_chat,
                     )
                     return result
 
@@ -1065,6 +1071,7 @@ async def _call_with_retries(
                     uploads,
                     messages=messages,
                     upload_delay=upload_delay,
+                    keep_chat=keep_chat,
                 )
                 return result
 
@@ -1074,6 +1081,7 @@ async def _call_with_retries(
                 prompt,
                 [],
                 messages=messages,
+                keep_chat=keep_chat,
             )
         except ToolExecutionError as exc:
             logger.error("Falha do motor/documento reportada pelo modelo: %s", exc)
@@ -1239,7 +1247,12 @@ def process_input_folder(folder_path):
                 create_job(file_path, entry.name, current_dir)
 
 
-async def run_stage1_index_creation(mode: str, job_filter: Optional[int] = None):
+async def run_stage1_index_creation(
+    mode: str,
+    job_filter: Optional[int] = None,
+    *,
+    keep_chat: bool = False,
+):
     logger.info('Iniciando Estagio 1: Criacao de Indice de Conhecimento.')
     pending_jobs = get_pending_jobs_by_stage(stage_id=1)
     if job_filter is not None:
@@ -1351,6 +1364,7 @@ async def run_stage1_index_creation(mode: str, job_filter: Optional[int] = None)
                     persist_uploads=bool(current_source_files),
                     upload_context=persistent_upload_context if current_source_files else None,
                     upload_delay=UPLOAD_DELAY_SECONDS,
+                    keep_chat=keep_chat,
                 )
 
                 accumulated_raw += raw_response
@@ -1512,7 +1526,12 @@ async def run_stage1_index_creation(mode: str, job_filter: Optional[int] = None)
         gemini_guard.close_now(),
     )
 
-async def process_pending_knowledges(mode: str, job_filter: Optional[int] = None):
+async def process_pending_knowledges(
+    mode: str,
+    job_filter: Optional[int] = None,
+    *,
+    keep_chat: bool = False,
+):
     _ensure_pending_knowledges_synced()
     logger.info('Iniciando Estagio 2: Criacao de Arquivos de Conhecimento.')
     pending_rows = [dict(row) for row in get_pending_knowledges()]
@@ -1580,6 +1599,7 @@ async def process_pending_knowledges(mode: str, job_filter: Optional[int] = None
                     prompt_template,
                     docling_prompt_template,
                     mode=mode,
+                    keep_chat=keep_chat,
                 )
             except ToolExecutionError:
                 abort_event.set()
@@ -1601,6 +1621,7 @@ async def _process_single_knowledge(
     docling_prompt_template: str,
     *,
     mode: str,
+    keep_chat: bool = False,
 ) -> None:
     knowledge_id = knowledge['knowledge_id']
     folder_path = knowledge['knowledge_folder_path']
@@ -1682,6 +1703,7 @@ async def _process_single_knowledge(
                 prefix='stage2',
                 prefer_original_when_single=True,
                 upload_unique_hint=str(knowledge_id),
+                keep_chat=keep_chat,
             )
 
             markdown_output = remove_think_tags(markdown_output)
@@ -1810,9 +1832,11 @@ async def main():
     parser.add_argument('--input', type=str, help='Caminho para uma pasta com arquivos .txt ou .pdf para processar.')
     parser.add_argument('--mode', choices=['upload', 'docling'], default='upload', help='Define se os arquivos serao enviados (upload) ou convertidos via Docling (docling).')
     parser.add_argument('--job', type=int, help='Filtra a execucao para um unico job cadastrado no banco.')
+    parser.add_argument('--keep-chat', action='store_true', help='Mantem o chat criado durante as chamadas ao modelo.')
     args = parser.parse_args()
     mode = (args.mode or 'upload').lower()
     job_filter = args.job
+    keep_chat = bool(args.keep_chat)
 
     logger.info(
         "Pipeline iniciado com input_dir={} | mode={} | job={}",
@@ -1826,12 +1850,12 @@ async def main():
         if args.input:
             logger.info("Processando pasta manual fornecida: {}", args.input)
             process_input_folder(args.input)
-            await run_stage1_index_creation(mode, job_filter=job_filter)
-            await process_pending_knowledges(mode, job_filter=job_filter)
+            await run_stage1_index_creation(mode, job_filter=job_filter, keep_chat=keep_chat)
+            await process_pending_knowledges(mode, job_filter=job_filter, keep_chat=keep_chat)
             await run_stage3_cleanup(job_filter=job_filter)
         else:
             logger.info("Nenhuma pasta informada; executando stages pendentes do banco.")
-            await process_pending_knowledges(mode, job_filter=job_filter)
+            await process_pending_knowledges(mode, job_filter=job_filter, keep_chat=keep_chat)
             await run_stage3_cleanup(job_filter=job_filter)
         logger.info("Pipeline finalizado com sucesso.")
     except Exception as exc:
