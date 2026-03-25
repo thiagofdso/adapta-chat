@@ -1200,7 +1200,7 @@ def process_input_folder(folder_path):
                 create_job(file_path, entry.name, current_dir)
 
 
-async def run_stage1_index_creation():
+async def run_stage1_index_creation(mode: str):
     logger.info('Iniciando Estagio 1: Criacao de Indice de Conhecimento.')
     pending_jobs = get_pending_jobs_by_stage(stage_id=1)
 
@@ -1244,11 +1244,26 @@ async def run_stage1_index_creation():
                 consolidate=False,
             )
 
-        prompt = generate_knowledge_extraction_prompt(
-            current_file_name,
-            existing_index_paths=index_part_paths if has_existing_index else None,
-            existing_index_display_names=index_display_names,
-        )
+        use_docling_mode = mode.lower() == "docling"
+        prompt: str
+        if use_docling_mode:
+            try:
+                docling_blocks = _build_docling_blocks([job['file_path']], folder_path)
+            except Exception as exc:
+                logger.error("Falha ao converter %s via Docling: %s", current_file_name, exc)
+                raise SystemExit(1) from exc
+            prompt = generate_docling_extraction_prompt(
+                current_file_name,
+                docling_blocks,
+                existing_index_paths=index_part_paths if has_existing_index else None,
+                existing_index_display_names=index_display_names,
+            )
+        else:
+            prompt = generate_knowledge_extraction_prompt(
+                current_file_name,
+                existing_index_paths=index_part_paths if has_existing_index else None,
+                existing_index_display_names=index_display_names,
+            )
         prompt = _append_index_json_to_prompt(
             prompt,
             index_part_paths if has_existing_index else None,
@@ -1266,8 +1281,7 @@ async def run_stage1_index_creation():
         knowledges_for_stage2: List[Dict[str, Any]] = []
         prepared_uploads: Optional[List[Tuple[Path, bool]]] = None
         persistent_upload_context: Dict[Any, List[Tuple[Dict[str, Any], bool, Path]]] = {}
-        current_source_files = list(source_files)
-        docling_mode = False
+        current_source_files = [] if use_docling_mode else list(source_files)
 
         try:
             while True:
@@ -1279,65 +1293,21 @@ async def run_stage1_index_creation():
                         prefer_original=True,
                         consolidate=False,
                     )
-                try:
-                    raw_response = await _call_with_retries(
-                        generator=claude_generator,
-                        prompt=None,
-                        source_paths=current_source_files,
-                        base_dir=folder_path,
-                        prefix='stage1',
-                        prefer_original_when_single=True,
-                        consolidate=False,
-                        generator_cycle=[claude_generator, gpt_generator, gemini_generator],
-                        messages=conversation,
-                        prepared_uploads=prepared_uploads if current_source_files else None,
-                        persist_uploads=bool(current_source_files),
-                        upload_context=persistent_upload_context if current_source_files else None,
-                        upload_delay=UPLOAD_DELAY_SECONDS,
-                    )
-                except ToolExecutionError as exc:
-                    if docling_mode or not _is_doc_engine_error(exc):
-                        raise
-                    logger.warning(
-                        "Doc engine falhou ao ler %s (job %s). Ativando fallback Docling.",
-                        current_file_name,
-                        job_id,
-                    )
-                    await _reset_persistent_uploads(persistent_upload_context)
-                    _cleanup_local_prepared_uploads(prepared_uploads)
-                    prepared_uploads = None
-                    persistent_upload_context.clear()
-                    try:
-                        docling_blocks = _build_docling_blocks([job['file_path']], folder_path)
-                    except (DoclingConversionError, OSError) as conv_exc:
-                        logger.error("Falha ao converter %s via Docling: %s", current_file_name, conv_exc)
-                        raise
-                    docling_prompt = generate_docling_extraction_prompt(
-                        current_file_name,
-                        docling_blocks,
-                        existing_index_paths=index_part_paths if has_existing_index else None,
-                        existing_index_display_names=index_display_names,
-                    )
-                    docling_prompt = _append_index_json_to_prompt(
-                        docling_prompt,
-                        index_part_paths if has_existing_index else None,
-                        index_display_names,
-                    )
-                    conversation = [{
-                        'role': 'user',
-                        'content': docling_prompt,
-                    }]
-                    _write_conversation_log(conversation)
-                    accumulated_raw = ""
-                    accumulated_clean_chunks = []
-                    if temp_raw_path.exists():
-                        try:
-                            temp_raw_path.write_text("", encoding='utf-8')
-                        except Exception:
-                            pass
-                    docling_mode = True
-                    current_source_files = []
-                    continue
+                raw_response = await _call_with_retries(
+                    generator=claude_generator,
+                    prompt=None,
+                    source_paths=current_source_files,
+                    base_dir=folder_path,
+                    prefix='stage1',
+                    prefer_original_when_single=True,
+                    consolidate=False,
+                    generator_cycle=[claude_generator, gpt_generator, gemini_generator],
+                    messages=conversation,
+                    prepared_uploads=prepared_uploads if current_source_files else None,
+                    persist_uploads=bool(current_source_files),
+                    upload_context=persistent_upload_context if current_source_files else None,
+                    upload_delay=UPLOAD_DELAY_SECONDS,
+                )
 
                 accumulated_raw += raw_response
                 sanitized_accumulated = _sanitize_patch_text(accumulated_raw) or accumulated_raw
@@ -1498,7 +1468,7 @@ async def run_stage1_index_creation():
         gemini_guard.close_now(),
     )
 
-async def process_pending_knowledges():
+async def process_pending_knowledges(mode: str):
     _ensure_pending_knowledges_synced()
     logger.info('Iniciando Estagio 2: Criacao de Arquivos de Conhecimento.')
     pending_rows = list(get_pending_knowledges())
@@ -1538,7 +1508,12 @@ async def process_pending_knowledges():
                 sanitized_row.get('knowledge_name') or f"Conhecimento {sanitized_row.get('knowledge_id')}"
             )
             try:
-                await _process_single_knowledge(sanitized_row, prompt_template, docling_prompt_template)
+                await _process_single_knowledge(
+                    sanitized_row,
+                    prompt_template,
+                    docling_prompt_template,
+                    mode=mode,
+                )
             except ToolExecutionError:
                 abort_event.set()
                 raise
@@ -1557,6 +1532,8 @@ async def _process_single_knowledge(
     knowledge: Dict[str, Any],
     prompt_template: str,
     docling_prompt_template: str,
+    *,
+    mode: str,
 ) -> None:
     knowledge_id = knowledge['knowledge_id']
     folder_path = knowledge['knowledge_folder_path']
@@ -1587,62 +1564,58 @@ async def _process_single_knowledge(
 
         raw_index_content = knowledge.get('sanitized_index_json') or '[]'
 
-        base_prompt = (
-            prompt_template
-            .replace('{knowledge_category}', knowledge_category)
-            .replace('{knowledge_name}', prompt_knowledge_name)
-            .replace('{index_knowledge}', raw_index_content)
-        )
-        upload_display_names_stage2 = _predict_upload_names(
-            consolidated_sources,
-            abs_folder_path,
-            prefix='stage2',
-            prefer_original=True,
-            consolidate=True,
-        )
-        source_prompt = _build_files_prompt_segment(consolidated_sources, abs_folder_path, upload_display_names_stage2)
-        if source_prompt:
-            base_prompt += source_prompt
+        use_docling_mode = mode.lower() == "docling"
+        if use_docling_mode:
+            try:
+                docling_blocks = _build_docling_blocks(consolidated_sources, abs_folder_path)
+            except Exception as exc:
+                logger.error("Falha ao converter fontes Docling para conhecimento %s: %s", knowledge_id, exc)
+                raise SystemExit(1) from exc
+            prompt_variant = (
+                docling_prompt_template
+                .replace('{knowledge_category}', knowledge_category)
+                .replace('{knowledge_name}', prompt_knowledge_name)
+                .replace('{index_knowledge}', raw_index_content)
+                .replace('{docling_blocks}', docling_blocks)
+            )
+        else:
+            prompt_variant = (
+                prompt_template
+                .replace('{knowledge_category}', knowledge_category)
+                .replace('{knowledge_name}', prompt_knowledge_name)
+                .replace('{index_knowledge}', raw_index_content)
+            )
+            upload_display_names_stage2 = _predict_upload_names(
+                consolidated_sources,
+                abs_folder_path,
+                prefix='stage2',
+                prefer_original=True,
+                consolidate=True,
+            )
+            source_prompt = _build_files_prompt_segment(
+                consolidated_sources,
+                abs_folder_path,
+                upload_display_names_stage2,
+            )
+            if source_prompt:
+                prompt_variant += source_prompt
 
         generator = Claude45SonnetGenerator()
         guard = LogoutGuard(generator.client, label=f"pipeline-stage2-{knowledge_id}")
-        docling_mode = False
-        docling_prompt_text: Optional[str] = None
         validation_retries = 0
 
         while True:
-            prompt_to_use = docling_prompt_text if docling_mode and docling_prompt_text else base_prompt
-            call_source_paths = [] if docling_mode else consolidated_sources
-            try:
-                markdown_output = await _call_with_retries(
-                    generator=generator,
-                    prompt=prompt_to_use,
-                    source_paths=call_source_paths,
-                    base_dir=abs_folder_path,
-                    prefix='stage2',
-                    prefer_original_when_single=True,
-                    upload_unique_hint=str(knowledge_id),
-                )
-            except ToolExecutionError as exc:
-                if docling_mode or not _is_doc_engine_error(exc):
-                    raise
-                logger.warning(
-                    "Doc engine falhou para o conhecimento %s. Convertendo fontes com Docling.",
-                    knowledge_id,
-                )
-                try:
-                    docling_blocks = _build_docling_blocks(consolidated_sources, abs_folder_path)
-                except (DoclingConversionError, OSError) as conv_exc:
-                    logger.error("Falha ao converter arquivos do conhecimento %s: %s", knowledge_id, conv_exc)
-                    raise
-                docling_prompt_text = (
-                    docling_prompt_template
-                    .replace('{knowledge_name}', prompt_knowledge_name)
-                    .replace('{index_knowledge}', raw_index_content)
-                    .replace('{docling_blocks}', docling_blocks)
-                )
-                docling_mode = True
-                continue
+            prompt_to_use = prompt_variant
+            call_source_paths = [] if use_docling_mode else consolidated_sources
+            markdown_output = await _call_with_retries(
+                generator=generator,
+                prompt=prompt_to_use,
+                source_paths=call_source_paths,
+                base_dir=abs_folder_path,
+                prefix='stage2',
+                prefer_original_when_single=True,
+                upload_unique_hint=str(knowledge_id),
+            )
 
             markdown_output = remove_think_tags(markdown_output)
             if _contains_retry_hint(markdown_output):
@@ -1693,6 +1666,7 @@ async def _process_single_knowledge(
     except Exception as exc:
         logger.error(f"Erro ao processar o conhecimento {knowledge_id}: {exc}")
         update_knowledge_status(knowledge_id, status_id=1)
+        raise SystemExit(1) from exc
     finally:
         if guard:
             await guard.close_now()
@@ -1765,21 +1739,23 @@ async def run_stage3_cleanup():
 async def main():
     parser = argparse.ArgumentParser(description='Pipeline de extracao e geracao de conhecimento.')
     parser.add_argument('--input', type=str, help='Caminho para uma pasta com arquivos .txt ou .pdf para processar.')
+    parser.add_argument('--mode', choices=['upload', 'docling'], default='upload', help='Define se os arquivos serao enviados (upload) ou convertidos via Docling (docling).')
     args = parser.parse_args()
+    mode = (args.mode or 'upload').lower()
 
-    logger.info("Pipeline iniciado com input_dir={}", args.input or "banco de jobs pendentes")
+    logger.info("Pipeline iniciado com input_dir={} | mode={}", args.input or "banco de jobs pendentes", mode)
     initialize_database()
 
     try:
         if args.input:
             logger.info("Processando pasta manual fornecida: {}", args.input)
             process_input_folder(args.input)
-            await run_stage1_index_creation()
-            await process_pending_knowledges()
+            await run_stage1_index_creation(mode)
+            await process_pending_knowledges(mode)
             await run_stage3_cleanup()
         else:
             logger.info("Nenhuma pasta informada; executando stages pendentes do banco.")
-            await process_pending_knowledges()
+            await process_pending_knowledges(mode)
             await run_stage3_cleanup()
         logger.info("Pipeline finalizado com sucesso.")
     except Exception as exc:
