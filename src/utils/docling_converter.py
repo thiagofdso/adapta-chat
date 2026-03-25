@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from utils.logger import logger
 
 DEFAULT_CACHE_DIR = Path("indexes") / "docling_cache"
 MAX_TEXT_CHARS = 60_000
-
-try:
-    from docling.document_converter import DocumentConverter
-except ImportError:  # pragma: no cover - docling available only in production envs
-    DocumentConverter = None  # type: ignore[assignment]
 
 
 class DoclingConversionError(RuntimeError):
@@ -27,7 +23,8 @@ class DoclingTextResult:
     source_path: Path
 
 
-_converter: Optional["DocumentConverter"] = None
+_DOC_CONVERTER_CLASS: Optional[type] = None
+_converter: Optional[Any] = None
 
 
 def convert_pdf_to_text(
@@ -60,15 +57,29 @@ def convert_pdf_to_text(
     return DoclingTextResult(text=_trim_text(text, max_chars), cache_path=cache_path, source_path=path)
 
 
-def _get_converter() -> "DocumentConverter":
-    if DocumentConverter is None:
+def _load_docling_converter_class() -> type:
+    global _DOC_CONVERTER_CLASS
+    if _DOC_CONVERTER_CLASS is not None:
+        return _DOC_CONVERTER_CLASS
+    try:
+        module = importlib.import_module("docling.document_converter")
+    except ImportError as exc:  # pragma: no cover - dependência opcional
         raise DoclingConversionError(
             "Dependencia 'docling' nao encontrada. Execute `poetry install` para habilitar a conversao."
-        )
+        ) from exc
+    converter_cls = getattr(module, "DocumentConverter", None)
+    if converter_cls is None:
+        raise DoclingConversionError("Modulo docling nao possui DocumentConverter.")
+    _DOC_CONVERTER_CLASS = converter_cls
+    return converter_cls
+
+
+def _get_converter() -> Any:
     global _converter
     if _converter is None:
         DEFAULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        _converter = DocumentConverter()
+        converter_cls = _load_docling_converter_class()
+        _converter = converter_cls()
     return _converter
 
 
