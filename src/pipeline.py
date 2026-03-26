@@ -103,7 +103,7 @@ def _load_stage2_concurrency() -> int:
             return value
         except ValueError:
             logger.warning("Valor invalido para STAGE2_CONCURRENCY=%s. Mantendo padrao.", raw)
-    return 1
+    return 3
 
 
 STAGE2_CONCURRENCY = _load_stage2_concurrency()
