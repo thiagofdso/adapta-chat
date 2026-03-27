@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import secrets
 import secrets
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ CLERK_JS_VERSION = "5.125.7"
 DEFAULT_MODEL = "CLAUDE_4_5_SONNET"
 LOGIN_THROTTLE_SECONDS = 2.0
 TOKEN_REFRESH_THROTTLE_SECONDS = 120.0
+STREAM_DEBUG_ENV_VAR = "ADAPTA_DEBUG_STREAM"
 
 FILE_API_BASE = f"{AGENT_BASE_URL}/api/file"
 FILE_UPLOAD_V2_ENDPOINT = f"{API_AGENT_BASE_URL}/api/file/upload"
@@ -59,6 +61,51 @@ FORMATOS_MIME = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
 }
+
+
+def _is_stream_debug_enabled() -> bool:
+    raw = os.getenv(STREAM_DEBUG_ENV_VAR, "")
+    return raw.strip().lower() in {"1", "true", "yes", "on", "debug"}
+
+
+def _truncate_debug_text(value: Any, limit: int = 400) -> str:
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}... [truncated {len(text) - limit} chars]"
+
+
+def _flush_stream_debug_buffer(
+    *,
+    chat_id: str,
+    kind: str,
+    buffer: List[str],
+    force: bool = False,
+    chunk_size: int = 240,
+) -> None:
+    if not buffer:
+        return
+
+    text = "".join(buffer)
+    emitted_upto = 0
+    newline_idx = text.rfind("\n")
+    if newline_idx != -1:
+        complete = text[: newline_idx + 1]
+        for line in complete.splitlines():
+            if line:
+                logger.debug("SSE {} | chat_id={} | {}", kind, chat_id, line)
+            else:
+                logger.debug("SSE {} | chat_id={} | ", kind, chat_id)
+        emitted_upto = newline_idx + 1
+    elif force or len(text) >= chunk_size:
+        logger.debug("SSE {} | chat_id={} | {}", kind, chat_id, text)
+        emitted_upto = len(text)
+
+    if emitted_upto:
+        remainder = text[emitted_upto:]
+        buffer.clear()
+        if remainder:
+            buffer.append(remainder)
 
 def _generate_uuid7_like() -> str:
     """Gera um UUID v7 (ou modelo compatível quando não suportado pela stdlib)."""
@@ -1199,9 +1246,28 @@ class AdaptaClientV2:
         thought_parts: List[str] = []
         self._last_thought = None
         pending_surrogate: Optional[str] = None
+        stream_debug = _is_stream_debug_enabled()
+        stream_answer_debug_buffer: List[str] = []
+        stream_thought_debug_buffer: List[str] = []
+        if stream_debug:
+            logger.debug(
+                "Stream debug habilitado via {} | chat_id={} | model={} | mensagens={} | arquivos={}",
+                STREAM_DEBUG_ENV_VAR,
+                chat_identifier,
+                model,
+                len(payload_messages),
+                len(files or []),
+            )
         try:
             async with client.stream("POST", stream_url, headers=headers, json=payload) as response:
                 response.raise_for_status()
+                if stream_debug:
+                    logger.debug(
+                        "SSE conectado | chat_id={} | status={} | url={}",
+                        chat_identifier,
+                        response.status_code,
+                        stream_url,
+                    )
                 async for raw_line in response.aiter_lines():
                     if not raw_line or not raw_line.startswith("data:"):
                         continue
@@ -1211,6 +1277,20 @@ class AdaptaClientV2:
                         continue
 
                     if payload_str == "[DONE]":
+                        if stream_debug:
+                            _flush_stream_debug_buffer(
+                                chat_id=chat_identifier,
+                                kind="thought",
+                                buffer=stream_thought_debug_buffer,
+                                force=True,
+                            )
+                            _flush_stream_debug_buffer(
+                                chat_id=chat_identifier,
+                                kind="answer",
+                                buffer=stream_answer_debug_buffer,
+                                force=True,
+                            )
+                            logger.debug("SSE done | chat_id={}", chat_identifier)
                         if pending_surrogate is not None:
                             yield ("answer", "\uFFFD")
                             pending_surrogate = None
@@ -1225,12 +1305,18 @@ class AdaptaClientV2:
                         continue
 
                     event_type = event.get("type")
-
                     if event_type == "tool-output-available":
                         output = event.get("output") or {}
                         analysis = output.get("analysis") or output.get("content")
                         if isinstance(analysis, str) and analysis.strip():
                             analysis = analysis.strip()
+                            if stream_debug:
+                                stream_thought_debug_buffer.append(analysis)
+                                _flush_stream_debug_buffer(
+                                    chat_id=chat_identifier,
+                                    kind="thought",
+                                    buffer=stream_thought_debug_buffer,
+                                )
                             thought_parts.append(analysis)
                             if include_tool_events:
                                 yield ("thought", analysis)
@@ -1265,10 +1351,25 @@ class AdaptaClientV2:
                         if isinstance(delta, str) and delta:
                             safe_text, pending_surrogate = self._coalesce_surrogates(delta, pending_surrogate)
                             if safe_text:
+                                if stream_debug:
+                                    stream_answer_debug_buffer.append(safe_text)
+                                    _flush_stream_debug_buffer(
+                                        chat_id=chat_identifier,
+                                        kind="answer",
+                                        buffer=stream_answer_debug_buffer,
+                                    )
                                 yield ("answer", safe_text)
                         continue
 
                     if event_type == "text-end":
+                        if stream_debug:
+                            _flush_stream_debug_buffer(
+                                chat_id=chat_identifier,
+                                kind="answer",
+                                buffer=stream_answer_debug_buffer,
+                                force=True,
+                            )
+                            logger.debug("SSE text end | chat_id={}", chat_identifier)
                         if pending_surrogate is not None:
                             yield ("answer", "\uFFFD")
                             pending_surrogate = None
