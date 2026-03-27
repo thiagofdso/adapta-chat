@@ -77,7 +77,6 @@ def _truncate_debug_text(value: Any, limit: int = 400) -> str:
 
 def _flush_stream_debug_buffer(
     *,
-    chat_id: str,
     kind: str,
     buffer: List[str],
     force: bool = False,
@@ -91,14 +90,10 @@ def _flush_stream_debug_buffer(
     newline_idx = text.rfind("\n")
     if newline_idx != -1:
         complete = text[: newline_idx + 1]
-        for line in complete.splitlines():
-            if line:
-                logger.debug("SSE {} | chat_id={} | {}", kind, chat_id, line)
-            else:
-                logger.debug("SSE {} | chat_id={} | ", kind, chat_id)
+        logger.opt(raw=True).debug(complete)
         emitted_upto = newline_idx + 1
     elif force or len(text) >= chunk_size:
-        logger.debug("SSE {} | chat_id={} | {}", kind, chat_id, text)
+        logger.opt(raw=True).debug(text)
         emitted_upto = len(text)
 
     if emitted_upto:
@@ -1279,13 +1274,11 @@ class AdaptaClientV2:
                     if payload_str == "[DONE]":
                         if stream_debug:
                             _flush_stream_debug_buffer(
-                                chat_id=chat_identifier,
                                 kind="thought",
                                 buffer=stream_thought_debug_buffer,
                                 force=True,
                             )
                             _flush_stream_debug_buffer(
-                                chat_id=chat_identifier,
                                 kind="answer",
                                 buffer=stream_answer_debug_buffer,
                                 force=True,
@@ -1313,7 +1306,6 @@ class AdaptaClientV2:
                             if stream_debug:
                                 stream_thought_debug_buffer.append(analysis)
                                 _flush_stream_debug_buffer(
-                                    chat_id=chat_identifier,
                                     kind="thought",
                                     buffer=stream_thought_debug_buffer,
                                 )
@@ -1354,7 +1346,6 @@ class AdaptaClientV2:
                                 if stream_debug:
                                     stream_answer_debug_buffer.append(safe_text)
                                     _flush_stream_debug_buffer(
-                                        chat_id=chat_identifier,
                                         kind="answer",
                                         buffer=stream_answer_debug_buffer,
                                     )
@@ -1364,7 +1355,6 @@ class AdaptaClientV2:
                     if event_type == "text-end":
                         if stream_debug:
                             _flush_stream_debug_buffer(
-                                chat_id=chat_identifier,
                                 kind="answer",
                                 buffer=stream_answer_debug_buffer,
                                 force=True,
