@@ -4,9 +4,12 @@ import hashlib
 import json
 import os
 import re
+import requests
 import sqlite3
+import ssl
 import sys
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -22,6 +25,17 @@ from utils.response_validator import requires_processing_retry
 from utils.text_cleaner import remove_think_tags
 from utils.session_guard import LogoutGuard
 
+ssl._create_default_https_context = ssl._create_unverified_context
+old_request = requests.Session.request
+
+
+def new_request(self, *args, **kwargs):
+    kwargs["verify"] = False
+    return old_request(self, *args, **kwargs)
+
+
+requests.Session.request = new_request
+
 
 PROMPTS_DIR = BASE_DIR / "microaprendizado"
 OUTPUT_ROOT = BASE_DIR / "microaprendizado_output"
@@ -34,6 +48,29 @@ STATUS_DONE = 3
 RETRY_LIMIT = 4
 RETRY_INITIAL_DELAY = 2.0
 MIN_MODEL_CALL_DELAY_SECONDS = 60.0
+DOC_TEXT_DEFAULT_MAX_CHARS = 60_000
+
+
+class DoclingSupportUnavailable(RuntimeError):
+    """Disparado quando o modo Docling e requisitado mas a dependencia nao esta disponivel."""
+
+
+@dataclass(frozen=True)
+class _DoclingSupport:
+    converter: Any
+    error_cls: type[BaseException]
+    max_chars: int
+
+
+@dataclass(frozen=True)
+class SourceMaterial:
+    mode: str
+    prompt_block: str
+    files: Optional[List[Dict[str, Any]]] = None
+    txt_path: Optional[Path] = None
+
+
+_docling_support_cache: Optional[_DoclingSupport] = None
 
 
 def _slugify(text: str) -> str:
@@ -55,6 +92,35 @@ def _build_output_dir(pdf_path: str) -> Path:
     stem = Path(pdf_path).stem
     slug = _slugify(stem)
     return OUTPUT_ROOT / f"{slug}_{_hash_path(os.path.abspath(pdf_path))}"
+
+
+def _get_docling_support() -> _DoclingSupport:
+    global _docling_support_cache
+    if _docling_support_cache is not None:
+        return _docling_support_cache
+    try:
+        from utils import docling_converter as docling_module
+    except Exception as exc:
+        raise DoclingSupportUnavailable(
+            "Modo docling requer a dependencia 'docling'. Execute `poetry install` antes de usar --mode docling."
+        ) from exc
+
+    converter = getattr(docling_module, "convert_pdf_to_text", None)
+    error_cls = getattr(docling_module, "DoclingConversionError", RuntimeError)
+    max_chars = getattr(docling_module, "MAX_TEXT_CHARS", DOC_TEXT_DEFAULT_MAX_CHARS)
+    if converter is None:
+        raise DoclingSupportUnavailable("Modulo utils.docling_converter nao expoe convert_pdf_to_text.")
+
+    _docling_support_cache = _DoclingSupport(converter=converter, error_cls=error_cls, max_chars=max_chars)
+    return _docling_support_cache
+
+
+def _truncate_text(text: str, max_chars: int = DOC_TEXT_DEFAULT_MAX_CHARS) -> str:
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    suffix = f"\n\n[Trecho truncado apos {max_chars} caracteres]"
+    return text[:max_chars] + suffix
 
 
 def _ensure_dirs(output_dir: Path) -> Dict[str, Path]:
@@ -371,12 +437,38 @@ def _load_prompt(file_name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _inject_book_content(prompt: str, content_block: str) -> str:
+    return re.sub(
+        r"\[INSERIR.*?CONTE[UÚ]DO DO LIVRO AQUI\]",
+        content_block,
+        prompt,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+
+def _replace_book_source_reference(prompt: str, source_block: str) -> str:
+    replacements = (
+        "LIVRO EM ANEXO, USE A FERRAMENTA DE LEITURA COMPLETA",
+        "LIVRO EM ANEXO (PDF).",
+    )
+    updated_prompt = prompt
+    replaced = False
+    for needle in replacements:
+        if needle in updated_prompt:
+            updated_prompt = updated_prompt.replace(needle, source_block)
+            replaced = True
+    if replaced:
+        return updated_prompt
+    return _replace_between(prompt, "CONTEÚDO ORIGINAL DO LIVRO", "PRINCÍPIOS DO MICROAPRENDIZADO", source_block)
+
+
 async def _call_model_text(
     generator: Claude45SonnetGenerator,
     prompt: str,
     *,
     files: Optional[List[Dict[str, Any]]] = None,
     retries: int = RETRY_LIMIT,
+    keep_chat: bool = False,
 ) -> str:
     delay = RETRY_INITIAL_DELAY
     last_exc: Optional[Exception] = None
@@ -386,6 +478,11 @@ async def _call_model_text(
                 [{"role": "user", "content": prompt}],
                 files=files,
             )
+            if not keep_chat:
+                try:
+                    await _cleanup_chat(generator)
+                except Exception:
+                    pass
         except Exception as exc:
             last_exc = exc
             logger.warning("Falha ao chamar modelo (tentativa {}): {}", attempt, exc)
@@ -418,10 +515,17 @@ async def _call_model_json(
     *,
     files: Optional[List[Dict[str, Any]]] = None,
     retries: int = RETRY_LIMIT,
+    keep_chat: bool = False,
 ) -> Tuple[Dict[str, Any], str]:
     augmented_prompt = prompt
     for attempt in range(1, retries + 1):
-        response = await _call_model_text(generator, augmented_prompt, files=files, retries=1)
+        response = await _call_model_text(
+            generator,
+            augmented_prompt,
+            files=files,
+            retries=1,
+            keep_chat=keep_chat,
+        )
         candidate = _extract_json_candidate(response) or response
         try:
             parsed = _safe_json_loads(candidate)
@@ -532,7 +636,61 @@ async def _ensure_upload(
     return upload_info
 
 
-async def process_job(pdf_path: str) -> None:
+async def _cleanup_chat(generator: Claude45SonnetGenerator) -> None:
+    client = getattr(generator, "client", None)
+    if client is None:
+        return
+    chat_id = getattr(client, "last_chat_id", None)
+    if not chat_id:
+        return
+    try:
+        await client.excluir_chat(chat_id)
+        logger.debug("Chat {} excluido com sucesso.", chat_id)
+    except Exception as exc:
+        logger.warning("Falha ao excluir chat {}: {}", chat_id, exc)
+
+
+async def _build_source_material(
+    generator: Claude45SonnetGenerator,
+    pdf_path: str,
+    mode: str,
+    output_dir: Path,
+    upload_cache: Dict[str, Dict[str, Any]],
+) -> SourceMaterial:
+    normalized_mode = mode.lower()
+    if normalized_mode == "upload":
+        upload_info = await _ensure_upload(generator, pdf_path, upload_cache)
+        return SourceMaterial(
+            mode=normalized_mode,
+            prompt_block="LIVRO EM ANEXO (PDF).",
+            files=[upload_info],
+        )
+
+    if normalized_mode != "docling":
+        raise ValueError(f"Modo invalido: {mode}")
+
+    support = _get_docling_support()
+    result = support.converter(pdf_path, max_chars=support.max_chars)
+    text = _truncate_text(getattr(result, "text", ""), max_chars=support.max_chars)
+    if not text.strip():
+        raise support.error_cls("Docling nao retornou texto utilizavel para o microaprendizado.")
+
+    txt_path = output_dir / f"{Path(pdf_path).stem}.txt"
+    txt_path.write_text(text, encoding="utf-8")
+    logger.info("Arquivo convertido para TXT em {}", txt_path)
+    prompt_block = (
+        f"LIVRO CONVERTIDO PARA TXT ({txt_path.name}). USE EXCLUSIVAMENTE O CONTEUDO ABAIXO.\n\n"
+        f"```text\n{text}\n```"
+    )
+    return SourceMaterial(
+        mode=normalized_mode,
+        prompt_block=prompt_block,
+        files=None,
+        txt_path=txt_path,
+    )
+
+
+async def process_job(pdf_path: str, mode: str, keep_chat: bool = False) -> None:
     output_dir = _build_output_dir(pdf_path)
     output_dirs = _ensure_dirs(output_dir)
 
@@ -557,20 +715,20 @@ async def process_job(pdf_path: str) -> None:
     upload_cache: Dict[str, Dict[str, Any]] = {}
 
     try:
+        source_material = await _build_source_material(generator, pdf_path, mode, output_dir, upload_cache)
         # Stage 1: Book analysis
         job = get_or_create_job(pdf_path, output_dir)
         if job["stage1_status"] != STATUS_DONE or not analysis_path.exists():
             logger.info("Stage 1 - Gerando analise do livro para {}", pdf_path)
             update_job_stage(job["id"], 1, STATUS_RUNNING)
             prompt = _load_prompt("1-analiselivro.md")
-            prompt = re.sub(
-                r"\[INSERIR.*?LIVRO AQUI\]",
-                "LIVRO EM ANEXO (PDF).",
+            prompt = _inject_book_content(prompt, source_material.prompt_block)
+            analysis_text = await _call_model_text(
+                generator,
                 prompt,
-                flags=re.IGNORECASE | re.DOTALL,
+                files=source_material.files,
+                keep_chat=keep_chat,
             )
-            upload_info = await _ensure_upload(generator, pdf_path, upload_cache)
-            analysis_text = await _call_model_text(generator, prompt, files=[upload_info])
             analysis_path.write_text(analysis_text, encoding="utf-8")
             update_job_stage(job["id"], 1, STATUS_DONE)
 
@@ -585,7 +743,7 @@ async def process_job(pdf_path: str) -> None:
             prompt = _load_prompt("2-sessoes.md")
             prompt = _replace_between(prompt, "ANÁLISE ANTERIOR", "INSTRUÇÕES DETALHADAS", analysis_text)
             prompt += "\n\nResponda APENAS com JSON valido."
-            sessions_json, _ = await _call_model_json(generator, prompt)
+            sessions_json, _ = await _call_model_json(generator, prompt, keep_chat=keep_chat)
             sessions_path.write_text(
                 json.dumps(sessions_json, ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -606,7 +764,7 @@ async def process_job(pdf_path: str) -> None:
                 "INSTRUÇÕES DETALHADAS",
                 f"```json\n{sessions_payload}\n```",
             )
-            review_text = await _call_model_text(generator, prompt)
+            review_text = await _call_model_text(generator, prompt, keep_chat=keep_chat)
             review_path.write_text(review_text, encoding="utf-8")
 
             corrected_candidate = _extract_json_candidate(review_text)
@@ -674,8 +832,13 @@ async def process_job(pdf_path: str) -> None:
                     "INSTRUÇÕES DETALHADAS POR SEÇÃO",
                     next_block,
                 )
-                upload_info = await _ensure_upload(generator, pdf_path, upload_cache)
-                base_markdown = await _call_model_text(generator, prompt, files=[upload_info])
+                prompt = _replace_book_source_reference(prompt, source_material.prompt_block)
+                base_markdown = await _call_model_text(
+                    generator,
+                    prompt,
+                    files=source_material.files,
+                    keep_chat=keep_chat,
+                )
                 paths["base"].write_text(base_markdown, encoding="utf-8")
                 update_lesson_step(lesson["id"], 4, STATUS_DONE)
 
@@ -692,7 +855,7 @@ async def process_job(pdf_path: str) -> None:
                     "INSTRUÇÕES DETALHADAS",
                     base_markdown,
                 )
-                enriched_markdown = await _call_model_text(generator, prompt)
+                enriched_markdown = await _call_model_text(generator, prompt, keep_chat=keep_chat)
                 paths["aula"].write_text(enriched_markdown, encoding="utf-8")
                 update_lesson_step(lesson["id"], 5, STATUS_DONE)
 
@@ -709,7 +872,7 @@ async def process_job(pdf_path: str) -> None:
                     "OBJETIVO",
                     enriched_markdown,
                 )
-                audio_script = await _call_model_text(generator, prompt)
+                audio_script = await _call_model_text(generator, prompt, keep_chat=keep_chat)
                 paths["audio"].write_text(audio_script, encoding="utf-8")
                 update_lesson_step(lesson["id"], 6, STATUS_DONE)
 
@@ -742,7 +905,7 @@ async def process_job(pdf_path: str) -> None:
                     enriched_markdown,
                 )
                 prompt += "\n\nResponda APENAS com JSON valido."
-                questions_json, _ = await _call_model_json(generator, prompt)
+                questions_json, _ = await _call_model_json(generator, prompt, keep_chat=keep_chat)
                 paths["perguntas"].write_text(
                     json.dumps(questions_json, ensure_ascii=False, indent=2),
                     encoding="utf-8",
@@ -766,7 +929,7 @@ async def process_job(pdf_path: str) -> None:
                     "INSTRUÇÕES DETALHADAS",
                     f"```json\n{questions_payload}\n```",
                 )
-                report_text = await _call_model_text(generator, prompt)
+                report_text = await _call_model_text(generator, prompt, keep_chat=keep_chat)
                 paths["relatorio"].write_text(report_text, encoding="utf-8")
 
                 corrected_candidate = _extract_json_candidate(report_text)
@@ -816,11 +979,22 @@ def _validate_pdf_path(pdf_path: str) -> str:
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Pipeline de microaprendizado a partir de PDF.")
     parser.add_argument("--pdf", required=True, help="Caminho do arquivo PDF para processar.")
+    parser.add_argument(
+        "--mode",
+        choices=("upload", "docling"),
+        default="upload",
+        help="`upload` envia o PDF para a IA; `docling` converte o PDF para TXT e injeta o conteudo no prompt.",
+    )
+    parser.add_argument(
+        "--keep-chat",
+        action="store_true",
+        help="Mantem o chat criado durante as chamadas ao modelo.",
+    )
     args = parser.parse_args()
 
     pdf_path = _validate_pdf_path(args.pdf)
     initialize_db()
-    await process_job(pdf_path)
+    await process_job(pdf_path, args.mode, keep_chat=bool(args.keep_chat))
 
 
 if __name__ == "__main__":
